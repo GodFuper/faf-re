@@ -1,3 +1,4 @@
+#include "moho/command/SSTITarget.h"
 #include "moho/entity/SSTIEntityVariableData.h"
 
 #include <cstddef>
@@ -209,6 +210,15 @@ namespace
    * Reads one `SSTIEntityAttachInfo` (a raw `EntId`) from the archive
    * through `moho::EntId`'s reflected type.
    */
+  static gpg::RType* sEntIdValueTypeForAttachInfo = nullptr;
+  [[nodiscard]] static gpg::RType* ResolveEntIdValueTypeForAttachInfo()
+  {
+    if (sEntIdValueTypeForAttachInfo == nullptr) {
+      sEntIdValueTypeForAttachInfo = gpg::LookupRType(typeid(moho::EntIdValue));
+    }
+    return sEntIdValueTypeForAttachInfo;
+  }
+
   void DeserializeSSTIEntityAttachInfoSerializerCallback(
     gpg::ReadArchive* const archive,
     const std::intptr_t objectPtr,
@@ -216,12 +226,7 @@ namespace
     gpg::RRef*
   )
   {
-    gpg::RType* type = moho::SSTIEntityAttachInfo::sType;
-    if (type == nullptr) {
-      type = gpg::LookupRType(typeid(moho::EntId));
-      moho::SSTIEntityAttachInfo::sType = type;
-    }
-
+    gpg::RType* const type = ResolveEntIdValueTypeForAttachInfo();
     const gpg::RRef entIdRef{};
     archive->Read(type, reinterpret_cast<void*>(objectPtr), entIdRef);
   }
@@ -240,12 +245,7 @@ namespace
     gpg::RRef*
   )
   {
-    gpg::RType* type = moho::SSTIEntityAttachInfo::sType;
-    if (type == nullptr) {
-      type = gpg::LookupRType(typeid(moho::EntId));
-      moho::SSTIEntityAttachInfo::sType = type;
-    }
-
+    gpg::RType* const type = ResolveEntIdValueTypeForAttachInfo();
     const gpg::RRef entIdRef{};
     archive->Write(type, reinterpret_cast<const void*>(objectPtr), entIdRef);
   }

@@ -672,9 +672,7 @@ CScrLuaInitForm* moho::func_ReconBlipIsKnownFake_LuaFuncDef()
  */
 ReconBlip::ReconBlip(Sim* const sim) :
     Entity(
-      nullptr,
       sim,
-      static_cast<EntId>(moho::ToRaw(moho::EEntityIdSentinel::Invalid)),
       kUnitCollisionBucketFlags
     ),
     mCreator{},

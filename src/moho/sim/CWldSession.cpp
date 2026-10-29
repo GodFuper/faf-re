@@ -1,3 +1,4 @@
+#include "moho/command/SSTITarget.h"
 #include "moho/sim/WldSessionState.h"
 #include "CWldSession.h"
 
@@ -544,7 +545,7 @@ namespace
     if (resolved != nullptr) {
       return resolved;
     }
-    return gpg::LookupRType(typeid(moho::EntId));
+    return gpg::LookupRType(typeid(moho::EntIdValue));
   }
 
   /**

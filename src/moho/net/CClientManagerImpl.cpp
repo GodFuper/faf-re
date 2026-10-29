@@ -991,6 +991,24 @@ bool CClientManagerImpl::EveryoneResponsiveSince(const int beat)
 /**
  * Address: 0x0053EA30 (FUN_0053EA30)
  */
+void CClientManagerImpl::RewindBeats(const int beat)
+{
+  std::scoped_lock lock(mLock);
+  mDispatchedBeat = beat;
+  mAvailableBeat = beat;
+  mFullyQueuedBeat = beat;
+  mPartiallyQueuedBeat = beat;
+  mStream.Clear();
+  for (CClientBase* client : mClients) {
+    if (client != nullptr) {
+      client->mQueuedBeat = static_cast<std::uint32_t>(beat);
+      client->mDispatchedBeat = static_cast<std::uint32_t>(beat);
+      client->mPipe.Clear();
+      client->mLatestAckReceived.assign(client->mLatestAckReceived.size(), beat);
+    }
+  }
+}
+
 void CClientManagerImpl::DoBeat()
 {
   std::scoped_lock lock(mLock);

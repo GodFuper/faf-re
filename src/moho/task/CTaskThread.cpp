@@ -846,7 +846,7 @@ namespace moho
    */
   void CTaskStage::MemberDeserialize(gpg::ReadArchive* const archive)
   {
-
+    Teardown();
     archive->ReadBool(&mActive);
     DeserializeThreads(archive);
   }

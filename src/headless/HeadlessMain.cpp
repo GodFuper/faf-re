@@ -71,12 +71,38 @@ namespace
   LONG WINAPI ReplayCrashFilter(EXCEPTION_POINTERS* const info)
   {
     const EXCEPTION_RECORD* const record = info != nullptr ? info->ExceptionRecord : nullptr;
+    const auto base = reinterpret_cast<std::uintptr_t>(::GetModuleHandleA(nullptr));
+    const auto addr = reinterpret_cast<std::uintptr_t>(record != nullptr ? record->ExceptionAddress : nullptr);
     std::printf(
-      "[%s] CRASH exception 0x%08lX at %p\n",
+      "[%s] CRASH exception 0x%08lX at %p (RVA +0x%llX)\n",
       gLabel.c_str(),
       record != nullptr ? record->ExceptionCode : 0ul,
-      record != nullptr ? record->ExceptionAddress : nullptr
+      record != nullptr ? record->ExceptionAddress : nullptr,
+      static_cast<unsigned long long>(addr >= base ? addr - base : 0)
     );
+    const CONTEXT* const ctx = info != nullptr ? info->ContextRecord : nullptr;
+    if (ctx != nullptr) {
+      ULONG_PTR lowLimit = 0, highLimit = 0;
+      GetCurrentThreadStackLimits(&lowLimit, &highLimit);
+      std::printf("  RIP=%p, RSP=%p, RBP=%p, RAX=%p, RCX=%p, RDX=%p\n",
+        (void*)ctx->Rip, (void*)ctx->Rsp, (void*)ctx->Rbp, (void*)ctx->Rax, (void*)ctx->Rcx, (void*)ctx->Rdx);
+      std::printf("  Thread stack limits: high=%p, low=%p, size=%llu KB, rsp offset from high=%lld KB, remaining to low=%lld KB\n",
+        (void*)highLimit, (void*)lowLimit,
+        (unsigned long long)((highLimit - lowLimit) / 1024),
+        (long long)((highLimit - ctx->Rsp) / 1024),
+        (long long)((ctx->Rsp - lowLimit) / 1024));
+      std::printf("  Stack backtrace probe (all code pointers from RSP to stack top):\n");
+      const uintptr_t* sp = reinterpret_cast<const uintptr_t*>(ctx->Rsp);
+      const uintptr_t* spEnd = reinterpret_cast<const uintptr_t*>(highLimit);
+      int count = 0;
+      for (; sp < spEnd && count < 100; ++sp) {
+        uintptr_t val = *sp;
+        if (val >= base + 0x1000 && val < base + 0x600000) {
+          std::printf("    [%d] %p (RVA +0x%llx)\n", count++, (void*)val, (unsigned long long)(val - base));
+        }
+      }
+    }
+    std::fflush(stdout);
     std::printf("[%s] VERDICT ended=False mismatches=%d crash=True\n", gLabel.c_str(), faf::headless::ChecksumMismatchCount());
     EndProcess(kExitCrash);
   }
@@ -227,6 +253,8 @@ int main(int argc, char** argv)
   (void)ReadIntOption("--checksum-period", options.checksumPeriod, bad);
   (void)ReadIntOption("--lead", options.replayLead, bad);
   (void)ReadIntOption("--timeout", options.timeoutMinutes, bad);
+  (void)ReadIntOption("--test-rewind-from", options.testRewindFrom, bad);
+  (void)ReadIntOption("--test-rewind-to", options.testRewindTo, bad);
   if (bad) {
     PrintUsage();
     return kExitBadInput;

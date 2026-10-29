@@ -83,7 +83,7 @@ set(_faf_sim_patterns
   "^moho/app/IWinApp\\.cpp$"
   # The emitter curve and parameter enums' reflection (the effect emitters the sim
   # creates take them by name from Lua).
-  "^moho/render/(EEmitterCurveTypeInfo|EEmitterParamTypeInfo)\\.cpp$"
+  "^moho/render/(EEmitterCurveTypeInfo|EEmitterParamTypeInfo|EmitterTypeTypeInfo)\\.cpp$"
   # SFD movie headers (MOV_GetDuration, behind the core Lua set's GetMovieDuration).
   "^moho/movie/sfd/(SfdHeaderParser|SfdHeaderInfo)\\.cpp$")
 

@@ -1,3 +1,4 @@
+#include <windows.h>
 #include "WriteArchive.h"
 
 #include <cstddef>
@@ -891,6 +892,14 @@ void WriteArchive::Write(const RType* const type, const void* const object, cons
             return;
         }
 
+        void* frames[32];
+        unsigned short frameCount = ::CaptureStackBackTrace(0, 32, frames, nullptr);
+        uintptr_t base = (uintptr_t)::GetModuleHandleA(nullptr);
+        std::printf("[WriteArchive] No serializer for type '%s'! Stack frames:\n", SafeTypeName(type));
+        for (unsigned short i = 0; i < frameCount; ++i) {
+            std::printf("  [%u] %p (RVA +0x%llx)\n", i, frames[i], (unsigned long long)((uintptr_t)frames[i] - base));
+        }
+        std::fflush(stdout);
         ThrowSerializationError(STR_Printf(
             "Error while creating archive: encounted an object of type \"%s\", but we have no serializer for it.",
             SafeTypeName(type)

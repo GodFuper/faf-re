@@ -825,6 +825,31 @@ void CSimDriver::PreparePendingSaveRequestLocked(boost::mutex::scoped_lock& lock
  * Unlocks the driver mutex, runs one `Sim::Sync` publish pass, relocks,
  * verifies historical checksums when available, and enqueues the sync packet.
  */
+namespace {
+  boost::mutex sSimBeatHooksMutex;
+  std::multimap<int32_t, moho::CSimDriver::SimBeatCallback> sSimBeatHooks;
+}
+
+void CSimDriver::RewindBeats(const int32_t beat)
+{
+  boost::mutex::scoped_lock lock(mLock);
+  RewindBeatsLocked(beat);
+}
+
+void CSimDriver::RewindBeatsLocked(const int32_t beat)
+{
+  mDispatchBeat = beat + 1;
+  mNextIssueBeat = beat + 1;
+  mLastDequeuedBeat = beat;
+  mSyncDataQueue.ClearAndDelete();
+}
+
+void CSimDriver::AddBeatHook(const int32_t beat, SimBeatCallback callback)
+{
+  boost::mutex::scoped_lock hookLock(sSimBeatHooksMutex);
+  sSimBeatHooks.emplace(beat, std::move(callback));
+}
+
 void CSimDriver::FinalizeSyncDispatchLocked(boost::mutex::scoped_lock& lock)
 {
   mActiveSyncFilter.CopyFrom(mPendingSyncFilter);
@@ -908,6 +933,23 @@ void CSimDriver::ExecuteDispatchStepLocked(boost::mutex::scoped_lock& lock)
     FinalizeSyncDispatchLocked(lock);
   }
   FAF_PROFILE_FRAME("Sim Beat");
+
+  {
+    std::vector<SimBeatCallback> hooks;
+    {
+      boost::mutex::scoped_lock hookLock(sSimBeatHooksMutex);
+      auto range = sSimBeatHooks.equal_range(beatToDispatch);
+      for (auto it = range.first; it != range.second; ++it) {
+        hooks.push_back(it->second);
+      }
+      sSimBeatHooks.erase(range.first, range.second);
+    }
+    for (const auto& hook : hooks) {
+      if (hook && mSim) {
+        hook(this, mSim.get(), beatToDispatch);
+      }
+    }
+  }
 
   if (mSimBusy) {
     return;

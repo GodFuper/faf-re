@@ -1,3 +1,4 @@
+#include <windows.h>
 #include "ArchiveSerialization.h"
 
 #include <cstddef>
@@ -844,6 +845,8 @@ void gpg::WriteRawPointer(
   WriteArchive* const archive, const RRef& objectRef, const TrackedPointerState state, const RRef& ownerRef
 )
 {
+
+
   if (!archive) {
     ThrowSerializationError("Error while creating archive: null WriteArchive.");
   }

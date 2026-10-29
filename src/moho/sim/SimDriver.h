@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <functional>
 #include <cstdint>
 #include <new>
 
@@ -825,6 +826,12 @@ namespace moho
     /// wrote it before queueing the packet and rewrites the slot only 128 beats later. Inline
     /// and unused by the client: no layout or code change in main.
     [[nodiscard]] const Sim* GetSimForReplayCheck() const noexcept { return mSim.get(); }
+    [[nodiscard]] Sim* GetSimMutable() noexcept { return mSim.get(); }
+    [[nodiscard]] boost::mutex& GetLock() noexcept { return mLock; }
+    using SimBeatCallback = std::function<void(CSimDriver*, Sim*, int32_t)>;
+    void AddBeatHook(int32_t beat, SimBeatCallback callback);
+    void RewindBeats(int32_t beat);
+    void RewindBeatsLocked(int32_t beat);
 
   private:
     /**

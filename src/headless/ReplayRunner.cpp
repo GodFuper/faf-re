@@ -1,6 +1,10 @@
 #include "headless/ReplayRunner.h"
 #include "headless/ReplayLuaState.h"
 #include "headless/ReplaySyncWriters.h"
+#include "gpg/core/containers/ReadArchive.h"
+#include "gpg/core/containers/WriteArchive.h"
+#include "moho/misc/CSaveGameRequestImpl.h"
+#include "moho/net/CReplayClient.h"
 
 #if FAF_SERVER_MODE
 #include "remote/client/LoopbackLink.h"
@@ -548,6 +552,116 @@ namespace faf::headless
     const double timeLimit = 60.0 * options.timeoutMinutes;
     double lastReport = 0.0;
     bool ready = false;
+    struct SRewindProbe {
+      bool snapshotTaken = false;
+      bool rewound = false;
+      bool verified = false;
+      std::uint64_t streamPosition = 0;
+      boost::shared_ptr<std::FILE> snapFile;
+      gpg::MD5Digest hashAtSnapshot{};
+      gpg::MD5Digest hashPass1{};
+      gpg::MD5Digest hashPass2{};
+      std::map<int32_t, gpg::MD5Digest> pass1Hashes;
+    };
+    auto rewindProbe = std::make_shared<SRewindProbe>();
+
+    if (options.testRewindFrom > 0 && options.testRewindTo > 0) {
+      for (int32_t b = options.testRewindTo; b <= options.testRewindFrom; ++b) {
+        simDriver->AddBeatHook(b, [=, &result](moho::CSimDriver* driver, moho::Sim* sim, int32_t beat) {
+          auto* const clientMgr = static_cast<moho::CClientManagerImpl*>(driver->GetClientManager());
+          auto* const replayClient = !clientMgr->mClients.empty() ? dynamic_cast<moho::CReplayClient*>(clientMgr->mClients[0]) : nullptr;
+
+          if (beat == options.testRewindTo && !rewindProbe->snapshotTaken && sim != nullptr && replayClient != nullptr) {
+            rewindProbe->streamPosition = replayClient->GetBeatStreamPosition(beat + 1);
+            if (rewindProbe->streamPosition == 0) {
+              rewindProbe->streamPosition = replayClient->GetStreamPosition();
+            }
+            rewindProbe->hashAtSnapshot = sim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+
+            std::printf("[%s] [rewind-probe] Capturing snapshot at beat %d on Sim thread...\n", label, beat);
+            std::fflush(stdout);
+            std::FILE* rawFile = nullptr;
+            fopen_s(&rawFile, "C:\\ProgramData\\FAForever\\cache\\snapshot_probe.bin", "w+b");
+            if (rawFile != nullptr) {
+              setvbuf(rawFile, nullptr, _IOFBF, 256 * 1024);
+              rewindProbe->snapFile.reset(rawFile, moho::SFileStarCloser{});
+            }
+            if (rewindProbe->snapFile) {
+              std::unique_ptr<gpg::WriteArchive> writeArchive(gpg::CreateBinaryWriteArchive(rewindProbe->snapFile));
+              try {
+                sim->SaveState(writeArchive.get());
+                std::fflush(rewindProbe->snapFile.get());
+                const long snapSize = std::ftell(rewindProbe->snapFile.get());
+                rewindProbe->snapshotTaken = true;
+                std::printf("[%s] [rewind-probe] Snapshot captured at beat %d: size=%ld bytes, streamPos=%llu, hash=%s\n",
+                            label, beat, snapSize,
+                            static_cast<unsigned long long>(rewindProbe->streamPosition),
+                            rewindProbe->hashAtSnapshot.ToString().c_str());
+              } catch (const std::exception& e) {
+                std::printf("[rewind-probe] EXCEPTION in SaveState: %s\n", e.what());
+              }
+              std::fflush(stdout);
+            }
+          }
+
+          if (sim != nullptr) {
+            rewindProbe->pass1Hashes[beat] = sim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+          }
+
+          if (beat == options.testRewindFrom && rewindProbe->snapshotTaken && !rewindProbe->rewound && sim != nullptr && replayClient != nullptr) {
+            rewindProbe->hashPass1 = sim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+            std::printf("[%s] [rewind-probe] Reached beat %d (Pass 1). Hash: %s. Initiating REWIND to beat %d...\n",
+                        label, beat, rewindProbe->hashPass1.ToString().c_str(), options.testRewindTo);
+            std::fflush(stdout);
+
+            driver->RewindBeatsLocked(options.testRewindTo);
+            clientMgr->RewindBeats(options.testRewindTo);
+            replayClient->RewindStream(rewindProbe->streamPosition, options.testRewindTo);
+
+            std::fseek(rewindProbe->snapFile.get(), 0, SEEK_SET);
+            std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(rewindProbe->snapFile));
+            sim->RestoreState(readArchive.get());
+            // Restore snapshot beat hash in ring buffer so VerifyChecksum does not see 0
+            sim->mSimHashes[static_cast<std::uint32_t>(options.testRewindTo) & 0x7Fu] = rewindProbe->hashAtSnapshot;
+
+            rewindProbe->rewound = true;
+            std::printf("[%s] [rewind-probe] State restored! Sim curTick=%u, curBeat=%u. Resuming playback to beat %d...\n",
+                        label, sim->mCurTick, sim->mCurBeat, options.testRewindFrom);
+            std::fflush(stdout);
+
+            for (int32_t p2 = options.testRewindTo + 1; p2 <= options.testRewindFrom; ++p2) {
+              driver->AddBeatHook(p2, [=, &result](moho::CSimDriver* d, moho::Sim* s, int32_t b) {
+                const gpg::MD5Digest h2 = s->mSimHashes[static_cast<std::uint32_t>(b) & 0x7Fu];
+                const gpg::MD5Digest h1 = rewindProbe->pass1Hashes[b];
+                const bool match = (std::memcmp(h1.vals, h2.vals, sizeof(h1.vals)) == 0);
+                if (!match) {
+                  std::printf("[%s] [rewind-probe] DIVERGENCE AT BEAT %d! Pass1: %s, Pass2: %s\n",
+                              label, b, h1.ToString().c_str(), h2.ToString().c_str());
+                } else if (b % 10 == 0 || b == options.testRewindFrom) {
+                  std::printf("[%s] [rewind-probe] Beat %d MATCH: %s\n", label, b, h2.ToString().c_str());
+                }
+                std::fflush(stdout);
+
+                if (b == options.testRewindFrom) {
+                  rewindProbe->hashPass2 = h2;
+                  rewindProbe->verified = true;
+                  if (match) {
+                    std::printf("[%s] [rewind-probe] *** HYPOTHESIS CONFIRMED! Checksum matches bit-for-bit (%s == %s) ***\n",
+                                label, rewindProbe->hashPass1.ToString().c_str(), rewindProbe->hashPass2.ToString().c_str());
+                  } else {
+                    std::printf("[%s] [rewind-probe] *** HYPOTHESIS FAILED! Checksum mismatch at final beat %d! ***\n", label, b);
+                  }
+                  std::fflush(stdout);
+                  result.gameOver = true;
+                  driver->RequestPause();
+                }
+              });
+            }
+          }
+        });
+      }
+    }
+
     const HANDLE syncAvailable = driver->GetSyncDataAvailableEvent();
 
     while (!result.gameOver) {

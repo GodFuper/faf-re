@@ -24,6 +24,7 @@ namespace
     {
       size_ = sizeof(moho::SPerArmyReconInfo);
       gpg::RType::Init();
+      Version(1);
       Finish();
     }
   };
@@ -212,6 +213,7 @@ namespace moho
     size_ = sizeof(ReconBlip);
     AddBase_Entity(this);
     gpg::RType::Init();
+    Version(1);
     Finish();
   }
 

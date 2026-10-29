@@ -462,6 +462,7 @@ namespace moho
      * Slot: 18
      */
     virtual void DoBeat();
+    void RewindBeats(int beat);
 
     /**
      * Address: 0x0053EDA0

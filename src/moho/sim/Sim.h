@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include "gpg/core/containers/DList.h"
 #include "../../gpg/core/reflection/Reflection.h"
@@ -1137,6 +1137,12 @@ namespace moho
      * Verifies save mode is allowed and serializes this `Sim` into the provided write archive.
      */
     void SaveState(gpg::WriteArchive* archive);
+
+    /**
+     * Restores simulation state in-place from the provided read archive,
+     * refreshes heightfield bounds, intel vis handles, and triggers Lua OnPostLoad().
+     */
+    void RestoreState(gpg::ReadArchive* archive);
 
     /**
      * Address: 0x007457F0 (FUN_007457F0, ?Shutdown@Sim@Moho@@QAEXXZ)

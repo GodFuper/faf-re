@@ -1,3 +1,4 @@
+#include "moho/command/SSTITarget.h"
 #include "moho/ai/CAiReconDBImplSerializer.h"
 
 #include <cstdlib>
@@ -95,7 +96,7 @@ void SReconKey::MemberDeserialize(gpg::ReadArchive* const archive)
 {
   const gpg::RRef ownerRef{};
   archive->Read(gpg::RTypeOf<WeakPtr<Entity>>(), &sourceEntity, ownerRef);
-  archive->Read(gpg::RTypeOf<EntId>(), &sourceEntityId, ownerRef);
+  archive->Read(gpg::RTypeOf<EntIdValue>(), &sourceEntityId, ownerRef);
 }
 
 /**
@@ -105,7 +106,7 @@ void SReconKey::MemberSerialize(gpg::WriteArchive* const archive) const
 {
   const gpg::RRef ownerRef{};
   archive->Write(gpg::RTypeOf<WeakPtr<Entity>>(), &sourceEntity, ownerRef);
-  archive->Write(gpg::RTypeOf<EntId>(), &sourceEntityId, ownerRef);
+  archive->Write(gpg::RTypeOf<EntIdValue>(), &sourceEntityId, ownerRef);
 }
 
 /**

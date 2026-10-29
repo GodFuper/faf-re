@@ -1,3 +1,4 @@
+#include <map>
 #include "CReplayClient.h"
 
 #include <boost/bind.hpp>
@@ -74,6 +75,11 @@ namespace
   }
 } // namespace
 
+namespace {
+  boost::mutex sOffsetsMutex;
+  std::map<std::uint32_t, std::uint64_t> sBeatStreamOffsets;
+}
+
 /**
  * Address: 0x0053BA50 (FUN_0053BA50)
  */
@@ -81,6 +87,10 @@ CReplayClient::CReplayClient(CClientManagerImpl* const manager, BVIntSet& comman
   : CClientBase(0, manager, "Replay", -1, commandSources, 0xFFu)
   , mReplayStream(replayStream)
 {
+  if (mReplayStream != nullptr) {
+    boost::mutex::scoped_lock lock(sOffsetsMutex);
+    sBeatStreamOffsets[1] = mReplayStream->VirtTell(gpg::Stream::ModeReceive);
+  }
   replayStream = nullptr;
 }
 
@@ -208,6 +218,37 @@ void CReplayClient::Process(CMessage& msg)
 /**
  * Address: 0x0053D360 (FUN_0053D360)
  */
+std::uint64_t CReplayClient::GetStreamPosition() const
+{
+  return mReplayStream != nullptr ? mReplayStream->VirtTell(gpg::Stream::ModeReceive) : 0;
+}
+
+std::uint64_t CReplayClient::GetBeatStreamPosition(const std::int32_t beat) const
+{
+  boost::mutex::scoped_lock lock(sOffsetsMutex);
+  const auto it = sBeatStreamOffsets.find(static_cast<std::uint32_t>(beat));
+  if (it != sBeatStreamOffsets.end()) {
+    return it->second;
+  }
+  return 0;
+}
+
+void CReplayClient::RewindStream(const std::uint64_t pos, const std::int32_t beat)
+{
+  if (mReplayStream != nullptr) {
+    mReplayStream->VirtSeek(gpg::Stream::ModeReceive, gpg::Stream::OriginBegin, static_cast<std::int64_t>(pos));
+  }
+  mReplayMessage.Clear();
+  mPipe.Clear();
+  mQueuedBeat = static_cast<std::uint32_t>(beat);
+  mDispatchedBeat = static_cast<std::uint32_t>(beat);
+  mReplayBeat = beat;
+  mAvailableBeatRemote = static_cast<std::uint32_t>(beat);
+  mLatestBeatDispatchedRemote = beat;
+  mReplayPollRequested = false;
+  Start();
+}
+
 void CReplayClient::Start()
 {
   if (mReplayPollRequested || mReplayStream == nullptr ||
@@ -239,6 +280,13 @@ void CReplayClient::Start()
       }
     } else {
       CClientBase::Process(mReplayMessage);
+
+      {
+        boost::mutex::scoped_lock lock(sOffsetsMutex);
+        if (mReplayStream != nullptr) {
+          sBeatStreamOffsets[mQueuedBeat + 1] = mReplayStream->VirtTell(gpg::Stream::ModeReceive);
+        }
+      }
 
       CMessage ackMessage(EClientMsg::CLIMSG_Ack);
       CMessageStream ackStream(ackMessage);

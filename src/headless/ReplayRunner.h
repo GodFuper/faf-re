@@ -30,6 +30,8 @@ namespace faf::headless
     int checksumPeriod = 0;     // when > 0: `sim_ChecksumPeriod` for this run (0 = the default)
     int replayLead = -1;        // when >= 0: `sim_ReplayLead` for this run
     int timeoutMinutes = 180;   // wall-clock limit for the whole run
+    int testRewindFrom = 0;     // test rewind: trigger rewind from this beat (e.g. 200)
+    int testRewindTo = 0;       // test rewind: rewind back to this beat (e.g. 100)
   };
 
   struct SReplayResult
