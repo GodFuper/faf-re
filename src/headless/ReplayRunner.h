@@ -22,11 +22,26 @@ namespace faf::headless
     int loopbackDeadReckoning = 0; // with `loopback`: dead-reckoning tolerance in 1/64-unit steps
     int loopbackTurnTolerance = 0; // with dead reckoning: orientation tolerance in 1/65536 turns (0: off)
     bool commandCheck = false;  // every command decoded and marshalled again, compared (ReplayCommandCheck.h)
+    bool oracleCheck = false;   // the visibility oracle against the sim's own publication (ReplayOracleCheck.h)
+    std::string oracleDigestsPath; // with `oracleCheck`: per beat and army, the oracle's answers as a digest
+    bool changeSetCheck = false; // the sync walk's change set against its packet (ReplayChangeSetCheck.h)
+    int viewPacketsArmy = -1;    // with `viewPacketsPath`: the army whose packet is digested
+    std::string viewPacketsPath; // when set: per beat, that army's entity lanes (ReplayViewPacketCheck.h)
+    std::string viewPacketsEntriesPath; // with `viewPacketsPath`: one line per record (beat, lane, id, digest)
+    int viewPacketsEntriesEvery = 1;    // with `viewPacketsEntriesPath`: records of every Nth beat only
+    std::string viewFramesPath;  // when set: every army's frame, per beat (CSV; ReplayViewFrameStats.h)
+    bool viewIds = false;        // with `viewFramesPath`: the frames carry each view's own ids (remote/ViewIdMap.h)
+    int viewLossPercent = 0;     // with `viewFramesPath`: a simulated lossy channel per view (FrameWindow.h)
+    int viewAckDelay = 0;        // its acknowledgements' delay in beats
+    bool spy = false;            // with `viewFramesPath`: the spy client's checks (ReplayViewFrameStats.h)
+    bool parallelViews = false;  // with `viewFramesPath` or `viewPacketsPath`: views built on the sim's workers
+    bool inboundCheck = false;   // with `viewIds`: every command through view ids and back (ReplayInboundCheck.h)
     std::string stateDigestPath; // when set: "beat digest" of what the sim published, every beat
     bool fpuReport = false;     // at beat 1: every thread's x87 control word and MXCSR
     std::string boneStatsPath;  // when set: changed bones per unit and beat (CSV), per blueprint at the end
     std::string laneSizesPath;  // when set: per-beat element counts and bytes of every sync lane (CSV)
     std::string blueprintOrderPath; // when set: every blueprint by ordinal, in load order (plan WPL.16)
+    std::string luaPairsPath;   // when set: the sim Lua state's pairs() order before BeginSession (plan WPL.18)
     int checksumPeriod = 0;     // when > 0: `sim_ChecksumPeriod` for this run (0 = the default)
     int replayLead = -1;        // when >= 0: `sim_ReplayLead` for this run
     int timeoutMinutes = 180;   // wall-clock limit for the whole run
@@ -55,6 +70,15 @@ namespace faf::headless
     std::uint64_t loopbackFailures = 0;
     std::string commandSummary; // with `commandCheck`: one line
     std::uint64_t commandFailures = 0;
+    std::string oracleSummary;  // with `oracleCheck`: a few lines
+    std::uint64_t oracleFailures = 0;
+    std::string changeSetSummary; // with `changeSetCheck`: two lines and the first differences
+    std::uint64_t changeSetFailures = 0;
+    std::string viewPacketsSummary; // with `viewPacketsPath`: one line
+    std::string viewFramesSummary;  // with `viewFramesPath`: a line per army
+    std::uint64_t viewFramesFailures = 0;
+    std::string inboundSummary;     // with `inboundCheck`
+    std::uint64_t inboundFailures = 0;
     std::string boneSummary;    // with `boneStatsPath`: one summary line
     std::string fpuReport;      // with `fpuReport`: one line per thread
   };

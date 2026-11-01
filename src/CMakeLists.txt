@@ -9,6 +9,9 @@
 
 include(sources.cmake)
 
+# The net channel, a library of its own (no engine dependency, see its CMakeLists).
+add_subdirectory(remote/net)
+
 if(FAF_TARGET_ARCH STREQUAL "x64")
   set(_faf_default_name main_x64)
 else()
@@ -17,6 +20,10 @@ endif()
 set(FAF_OUTPUT_NAME "${_faf_default_name}" CACHE STRING "Engine executable name, without .exe")
 
 add_library(faf_engine OBJECT ${FAF_ENGINE_SOURCES})
+
+# The git commit for gpg/core/diagnostics/BuildInfo.cpp, read on every build.
+include(FafBuildInfo)
+faf_build_info(faf_engine ${FAF_TARGET_ARCH})
 
 add_executable(faf_main WIN32)
 set_target_properties(faf_main PROPERTIES OUTPUT_NAME "${FAF_OUTPUT_NAME}")
@@ -74,6 +81,8 @@ target_include_directories(faf_engine PUBLIC
   "${FAF_DEPENDENCIES_DIR}/boost_1_34_1"
   "${FAF_DEPENDENCIES_DIR}/zlib-1.2.3")
 target_link_libraries(faf_engine PUBLIC faf_codegen faf::wx Wm3Dx9Application)
+# In-engine peer links (moho/net/NetlinkPeers.cpp, issue #233; client only).
+target_link_libraries(faf_engine PUBLIC faf_netlink)
 
 set(_faf_main_options
   # C++ exceptions with extern "C" functions allowed to throw (/EHs, not
@@ -313,6 +322,10 @@ include(sim_sources.cmake)
 
 set(_faf_client_sources ${FAF_ENGINE_SOURCES})
 list(REMOVE_ITEM _faf_client_sources ${FAF_SIM_SOURCES})
+if(FAF_SERVER_MODE)
+  # The oracle's golden test reads the client world (CWldSession): faf_main's alone.
+  list(APPEND _faf_client_sources remote/client/OracleGolden.cpp)
+endif()
 set(_faf_sim_objects "$<TARGET_OBJECTS:faf_engine>")
 set(_faf_client_regex "")
 set(_faf_client_count 0)

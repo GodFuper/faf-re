@@ -36,6 +36,9 @@ else()
 endif()
 if(FAF_TARGET_ARCH STREQUAL "x64")
   enable_language(ASM_MASM)
+  # CMake maps the Embedded debug format to ml64's -Zi, which llvm-ml64 does
+  # not support and ignores with a warning; the object is the same without it.
+  set(CMAKE_ASM_MASM_COMPILE_OPTIONS_MSVC_DEBUG_INFORMATION_FORMAT_Embedded "")
 endif()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -96,9 +99,12 @@ option(FAF_SERVER_MODE "Build the client side of server-authoritative sessions (
 # --- Dependencies (built here, /MT, read-only sources) ----------------------------------
 add_subdirectory(cmake/deps/wxwindows)
 add_subdirectory(cmake/deps/wildmagic)
+add_subdirectory(cmake/deps/libjuice)
+add_subdirectory(cmake/deps/libdatachannel)
 if(FAF_TARGET_ARCH STREQUAL "x64")
   add_subdirectory(cmake/deps/zlib)
 endif()
+add_subdirectory(cmake/deps/monocypher)
 
 # --- Profiler (optional Tracy integration) --------------------------------------------
 option(FAF_ENABLE_TRACY "Enable Tracy profiler instrumentation" OFF)
@@ -121,6 +127,10 @@ if(FAF_ENABLE_TRACY)
   target_compile_options(TracyClient PRIVATE $<TARGET_PROPERTY:faf_codegen,INTERFACE_COMPILE_OPTIONS>)
   target_compile_definitions(TracyClient PRIVATE $<TARGET_PROPERTY:faf_codegen,INTERFACE_COMPILE_DEFINITIONS>)
 endif()
+
+# --- Peer links (issue #229) and the adapter replacement --------------------------------
+add_subdirectory(src/netlink)
+add_subdirectory(src/netbridge)
 
 # --- Engine -----------------------------------------------------------------------------
 add_subdirectory(src)

@@ -3,9 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <new>
 #include <typeinfo>
 #include <utility>
+#include <vector>
 
 #include "gpg/core/containers/ArchiveSerialization.h"
 #include "gpg/core/containers/String.h"
@@ -14,6 +16,7 @@
 #include "moho/animation/CAniPose.h"
 #include "moho/animation/CAniSkel.h"
 #include "moho/animation/IAniManipulator.h"
+#include "moho/animation/PoseJobs.h"
 #include "moho/console/CConCommand.h"
 #include "gpg/core/reflection/StaticInitPhase.h"
 
@@ -364,6 +367,8 @@ namespace moho
    */
   CAniActor::~CAniActor()
   {
+    POSE_WaitFor(this); // engine addition (sim_ParallelPose): a queued update must not outlive us
+
     auto* const listHead = static_cast<TDatListItem<IAniManipulator, void>*>(&mManipulatorsByPrecedence);
     while (listHead->mNext != listHead) {
       IAniManipulator* const manipulator = ListNodeToManipulator(listHead->mNext);
@@ -488,6 +493,7 @@ namespace moho
    */
   boost::shared_ptr<const CAniSkel> CAniActor::GetSkeleton() const
   {
+    POSE_WaitFor(this); // engine addition (sim_ParallelPose)
     return mPose->GetSkeleton();
   }
 
@@ -499,6 +505,7 @@ namespace moho
    */
   boost::shared_ptr<CAniPose> CAniActor::GetPoseShared() const
   {
+    POSE_WaitFor(this); // engine addition (sim_ParallelPose)
     return mPose;
   }
 
@@ -510,6 +517,7 @@ namespace moho
    */
   boost::shared_ptr<CAniPose> CAniActor::GetPriorPoseShared() const
   {
+    POSE_WaitFor(this); // engine addition (sim_ParallelPose)
     return mPriorPose;
   }
 
@@ -561,6 +569,12 @@ namespace moho
     mPose->UpdateBones();                     // 0x0063AAEE
     mPose->SetWorldTransform(worldTransform); // 0x0063AAFA
 
+    const AniBoneWriteHook hook = gAniBoneWriteHook;
+    std::vector<VTransform> before;
+    if (hook != nullptr) {
+      hook(mPose.get(), nullptr, -1);
+    }
+
     auto* const listHead = static_cast<TDatListItem<IAniManipulator, void>*>(&mManipulatorsByPrecedence);
     for (auto* node = mManipulatorsByPrecedence.mNext; node != listHead;) {
       IAniManipulator* const manipulator = ListNodeToManipulator(node);
@@ -572,10 +586,48 @@ namespace moho
       node = node->mNext;
 
       if (enabled) {
+        // The class is read before the update: the manipulator may delete itself inside it.
+        // RTTI, not `GetClass()`: several manipulators (rotate, slide, slave, builder arm) inherit
+        // IAniManipulator's and would all report the base class.
+        const char* const manipulatorClass = hook != nullptr ? typeid(*manipulator).name() : nullptr;
+        if (hook != nullptr) {
+          before.clear();
+          for (const CAniPoseBone& bone : mPose->mBones) {
+            before.push_back(bone.mLocalTransform);
+          }
+        }
+
         // Result discarded at the call site.
         (void)manipulator->ManipulatorUpdate();
+
+        if (hook != nullptr) {
+          int index = 0;
+          for (const CAniPoseBone& bone : mPose->mBones) {
+            if (static_cast<std::size_t>(index) < before.size()
+                && std::memcmp(&bone.mLocalTransform, &before[index], sizeof(VTransform)) != 0) {
+              hook(mPose.get(), manipulatorClass, index);
+            }
+            ++index;
+          }
+        }
       }
     }
+  }
+
+  AniBoneWriteHook gAniBoneWriteHook = nullptr;
+
+  bool CAniActor::AllEnabledManipulators(bool (*const test)(const IAniManipulator& manipulator)) const
+  {
+    auto* const listHead = const_cast<TDatListItem<IAniManipulator, void>*>(
+      static_cast<const TDatListItem<IAniManipulator, void>*>(&mManipulatorsByPrecedence)
+    );
+    for (auto* node = listHead->mNext; node != listHead; node = node->mNext) {
+      const IAniManipulator* const manipulator = ListNodeToManipulator(node);
+      if (manipulator != nullptr && manipulator->mEnabled && !test(*manipulator)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /**

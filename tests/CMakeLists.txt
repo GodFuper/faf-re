@@ -9,6 +9,39 @@ target_link_libraries(faf_net_tests PRIVATE faf_engine)
 
 add_test(NAME net_robustness COMMAND faf_net_tests)
 
+# Peer transports of the UDP connector (issue #232): two connectors in one
+# process, over their sockets and through transports.
+add_executable(faf_peer_transport_tests EXCLUDE_FROM_ALL net/PeerTransportTests.cpp)
+target_link_libraries(faf_peer_transport_tests PRIVATE faf_engine)
+
+add_test(NAME net_peer_transport COMMAND faf_peer_transport_tests)
+
+# net_FastRetransmit (issue #237): a lost DATA packet's recovery with the
+# switch off and on, at a fast rate and at the game's rate.
+add_executable(faf_fast_retransmit_tests EXCLUDE_FROM_ALL net/FastRetransmitTests.cpp)
+target_link_libraries(faf_fast_retransmit_tests PRIVATE faf_engine)
+
+add_test(NAME net_fast_retransmit COMMAND faf_fast_retransmit_tests)
+
+# libjuice gathering against a STUN/TURN server (issue #228), run by hand:
+#   faf_juice_gather <host> <port> [<turn user> <turn password>]
+add_executable(faf_juice_gather EXCLUDE_FROM_ALL netlink/JuiceGatherTest.cpp)
+target_link_libraries(faf_juice_gather PRIVATE faf_juice faf_codegen)
+
+# netlink (issue #229): JSON, signalling and SDP checks, then two links in one
+# process. --bind <address> where inbound UDP to 0.0.0.0 is dropped.
+add_executable(faf_netlink_tests EXCLUDE_FROM_ALL netlink/NetlinkTests.cpp)
+target_link_libraries(faf_netlink_tests PRIVATE faf_netlink faf_codegen)
+
+# libdatachannel (issue #238): two local peers open an unordered, unreliable
+# data channel and echo datagrams. --bind <address> as above.
+add_executable(faf_datachannel_test EXCLUDE_FROM_ALL netlink/DataChannelTest.cpp)
+target_link_libraries(faf_datachannel_test PRIVATE faf_datachannel faf_codegen)
+set_target_properties(faf_datachannel_test PROPERTIES CXX_STANDARD 17)
+if(MSVC)
+  target_compile_options(faf_datachannel_test PRIVATE /EHsc)
+endif()
+
 add_executable(faf_profiler_tests EXCLUDE_FROM_ALL profiling/ProfilerFacadeTests.cpp)
 target_include_directories(faf_profiler_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 

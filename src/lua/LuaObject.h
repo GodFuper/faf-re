@@ -5,6 +5,16 @@
 #include <type_traits>
 #include "lua/LuaRuntimeTypes.h"
 
+extern "C"
+{
+	/**
+	 * Engine addition, headless `--bone-stats` (dedicated-server plan WP8.5): when set,
+	 * `luaD_precall` calls it with every C function it is about to run. Null in the game.
+	 */
+	using LuaCFunctionCallHook = void (*)(int (*function)(lua_State*));
+	extern LuaCFunctionCallHook gLuaCFunctionCallHook;
+}
+
 namespace gpg
 {
 	class ReadArchive;
@@ -3243,3 +3253,19 @@ extern "C" int LuaPlusH_next(
  */
 int LuaSerializeToString(lua_State* L);
 int LuaSerializeFromString(lua_State* L);
+
+namespace moho
+{
+	using GcUserParallelForFn = void (*)(std::size_t count, std::size_t grain, void (*fn)(void*, std::size_t, std::size_t), void* context);
+	using GcUserWorkerCountFn = unsigned int (*)();
+
+	struct UserGcDispatcher
+	{
+		GcUserParallelForFn parallelFor{nullptr};
+		GcUserWorkerCountFn workerCount{nullptr};
+		const bool* enabledFlag{nullptr};
+		const bool* sweepEnabledFlag{nullptr};
+	};
+
+	void RegisterUserGcDispatcher(const UserGcDispatcher& dispatcher) noexcept;
+}

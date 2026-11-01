@@ -33,6 +33,7 @@
 #include "moho/misc/StartupHelpers.h"
 #include "moho/misc/StatItem.h"
 #include "moho/misc/Stats.h"
+#include "moho/sim/DesyncTelemetry.h"
 #include "moho/misc/TimeBar.h"
 #include "moho/misc/CDiskWatch.h"
 #include "moho/net/CGpgNetInterface.h"
@@ -51,6 +52,7 @@
 #include "moho/ui/IUIManager.h"
 #include "moho/ui/UiWorldShapes.h"
 #if FAF_SERVER_MODE
+#include "remote/client/OracleGolden.h"
 #include "remote/client/ServerConnect.h"
 #endif
 
@@ -368,6 +370,9 @@ namespace
       moho::CON_Execute("WIN_ShowLogDialog true");
     }
 
+    // Engine addition (issue #218): telemetry flags and the switch defaults, before /con changes them.
+    moho::TELEMETRY_Startup();
+
     // Engine addition: `/con name=value;name2=value2` runs console commands at startup, so a
     // launcher can set user-side console variables (e.g. `/con sim_ReplayLead=0`).
     if (moho::CFG_GetArgOption("/con", 1, &args) && !args.empty()) {
@@ -389,6 +394,10 @@ namespace
     moho::PlaceCurrentThread(moho::EThreadRole::Main);
 
 #if FAF_SERVER_MODE
+    // Engine addition, server mode: `/oraclegolden <file>`, the visibility oracle's golden test
+    // (remote/client/OracleGolden.h), for whatever session starts below.
+    (void)faf::remote::client::InstallOracleGoldenFromCommandLine();
+
     // Engine addition, server mode: `/connectserver` takes over startup. Without it, every
     // path below runs as before.
     switch (faf::remote::StartServerSessionFromCommandLine()) {
@@ -1188,6 +1197,8 @@ void CScApp::Main()
   } else if (moho::CD3DDevice* const device = moho::D3D_GetDevice(); device != nullptr) {
     device->Refresh();
   }
+
+  moho::UI_ProcessIdleGC();
 
   if (initialized == 0) {
     InitializeSessionFromCommandLine();

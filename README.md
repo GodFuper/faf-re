@@ -13,7 +13,7 @@ The Moho engine behind *Supreme Commander: Forged Alliance* (2007), rebuilt as r
 | Builds | `main.exe` (x86) and `main_x64.exe` link and run |
 | Renders | Main menu, cinematic playback, in-game world view; Direct3D 9, 11, 12 and Vulkan ([Renderer backends](docs/RENDERER_BACKENDS.md)) |
 | Plays | Native save/load on both architectures |
-| Replay parity | 448 of 449 vault replays match every recorded checksum, 232 hours of game on 168 maps; the one that does not desyncs at its first checksum, probably because of its map (x64 headless, `/simworkers 8`, 29/10/2026) ([Retail replay parity](docs/RETAIL_REPLAY_PARITY.md)) |
+| Replay parity | 12,714 of 13,148 vault replays (96.7 %) match every recorded checksum on CI (30–31/10/2026), 12,758 (97.0 %) with the fixes since; at most 28 (0.22 %) still fail because of the engine ([Retail replay parity](docs/RETAIL_REPLAY_PARITY.md)) |
 | Live multiplayer | Retail, rebuilt x86 and rebuilt x64 in one game: 21 min of AI-driven fighting without a desync; retail and our x64 also ran 30 min without a desync, with and without sim workers |
 | Performance | x64 replays take 19 % less time than retail on average (4 % to 33 %) ([Performance](docs/PERFORMANCE.md)) |
 | Recovery | Complete: every engine function the game uses is written as source (40,617 functions). The rest of the shipped exe is library code we link from source (wxWidgets, the MSVC runtime, libpng, Wild Magic, ...) or unreferenced fragments; 0 functions are outstanding |
@@ -22,7 +22,24 @@ Most symbols in the retail engine were never hand-written: they are template ins
 
 ## Retail parity
 
-Real games from the FAF replay vault (stock and community maps, 1–12 human players, games against the built-in AI and M28AI) play back on the rebuilt engine checksum-identical to retail: 448 of 449 in the 29/10/2026 run, including seven of the eight that still desynced on 27/10/2026. The remaining one desyncs at its first checksum, before the game has really started, probably because of its map. Method, per-replay results and the causes of past divergences: [docs/RETAIL_REPLAY_PARITY.md](docs/RETAIL_REPLAY_PARITY.md).
+Real games from the FAF replay vault (stock and community maps, 1–12 human players, games against the built-in AI and M28AI) play back on the rebuilt engine checksum-identical to retail. The largest run, CI run 41025691648 on commit `7986851b6` (x64 headless, 30–31/10/2026), played 13,148 replays:
+
+| Result | Replays | Share of played |
+|---|---|---|
+| **Pass**: every recorded checksum matches | **12,714** | **96.70 %** |
+| Desync | 231 | 1.76 % |
+| Timeout, crash or error of the CI runner (time limit, map extraction, map not on FAF's server) | 203 | 1.54 % |
+
+| Desync cause (as of master `7ced1a507`, 01/11/2026) | Desyncs | Share of desyncs | Share of played |
+|---|---|---|---|
+| Maps and content: survival maps that need the campaign's strings, maps that ship their own blueprints | 122 | 52.8 % | 0.93 % |
+| Live game split: the players' own checksums already disagreed | 34 | 14.7 % | 0.26 % |
+| Retail gives the same hash | 3 | 1.3 % | 0.02 % |
+| Our bugs, fixed since | 44 | 19.0 % | 0.33 % |
+| Our bugs, cause known, open on x64 | 3 | 1.3 % | 0.02 % |
+| Not explained yet | 25 | 10.8 % | 0.19 % |
+
+With the fixes, 12,758 of 13,148 (97.03 %) pass on master. Method, per-replay results and the causes of past divergences: [docs/RETAIL_REPLAY_PARITY.md](docs/RETAIL_REPLAY_PARITY.md).
 
 ## Performance
 
@@ -31,6 +48,16 @@ Real games from the FAF replay vault (stock and community maps, 1–12 human pla
 - **Exact**: sim work runs on worker threads only where the result is provably the same as serial, and every change has a switch that restores the original code ([docs/SWITCHES.md](docs/SWITCHES.md)).
 
 Numbers, method and what is next: [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+
+## Desync diagnostics
+
+When a multiplayer game desyncs, three aids show why.
+
+- **Desync recorder** (on by default in live multiplayer games, `/nodesyncdump` turns it off): keeps the state each beat hashes for the recent beats in memory, copied as bytes, and after a checksum mismatch writes a `desync_<game id>_beat<N>_army<A>.zip` dump into the folder of the game's log file. The game log names that folder when a game starts. `/desyncrecorder` records the full sync log instead, at a sim-time cost.
+- **Dump compare** (`tools/desync-diff/desync_diff.py`): two players' dumps in, the first value that differs out: beat, entity, field.
+- **Telemetry** (on by default in live multiplayer games, `/notelemetry` turns it off): one small OpenTelemetry log record per desync and per game end, without player names, user ids or paths, and the desync dump as `.tar.gz`, sent to the faf-re desync server (`fafre-metrics.draiget.dev`). Unlike the records, a dump holds player names and the game's sync log. `/telemetryendpoint URL` and `/telemetrydumpendpoint URL` send to a server of your own instead; `tools/desync-server` is one, ready for Docker Compose or Kubernetes.
+
+Setting up the collector and the receiver, and what they receive: [docs/DESYNC_DIAGNOSTICS.md](docs/DESYNC_DIAGNOSTICS.md). Every switch and field: [docs/SWITCHES.md](docs/SWITCHES.md#desync-telemetry).
 
 ## Build
 
@@ -53,11 +80,13 @@ cmake --preset clang-x64-release; cmake --build --preset clang-x64-release   # b
 cmake --preset clang-x86-release; cmake --build --preset clang-x86-release   # build/clang-x86-release/src/main.exe
 ```
 
-Configuring brings `dependencies/` up to date: the submodules (Wild Magic 3.8, zlib 1.2.3, FX11, Vulkan headers, FFmpeg 7.1.3), then boost 1.34.1, wxWidgets 2.4.2 and DXC, each pinned by commit or SHA256, and finally the FAF patches in `dependencies/patches/`. A missing submodule is cloned, a missing download is fetched, and everything is compiled from source. The DirectX SDK (June 2010) is used when installed; otherwise its headers and libraries are extracted from Microsoft's installer. `cmake -P cmake/FafDependencies.cmake` does the same without configuring.
+Configuring brings `dependencies/` up to date: the submodules (Wild Magic 3.8, zlib 1.2.3, FX11, Vulkan headers, FFmpeg 7.1.3), then boost 1.34.1, wxWidgets 2.4.2, DXC, libjuice 1.7.4, libdatachannel 0.24.6 with usrsctp, plog and Mbed TLS 3.6.7, and Monocypher 4.0.2, each pinned by commit or SHA256, and finally the FAF patches in `dependencies/patches/`. A missing submodule is cloned, a missing download is fetched, and everything is compiled from source. The DirectX SDK (June 2010) is used when installed; otherwise its headers and libraries are extracted from Microsoft's installer. `cmake -P cmake/FafDependencies.cmake` does the same without configuring.
 
 **IDEs.** Visual Studio 2022: File → Open → Folder, then pick a preset. VS Code: install the recommended extensions (CMake Tools, C/C++); CMake Tools offers the same presets, and IntelliSense reads the configured preset.
 
 FFmpeg 7.1.3 (the SFD movie player's decoder) is compiled from source with the engine: `dependencies/ffmpeg` is the unmodified FFmpeg release plus a CMake build ([Draiget/ffmpeg-mirror](https://github.com/Draiget/ffmpeg-mirror)), and its libraries are linked statically, so there are no FFmpeg DLLs and no prebuilt binaries. Its configuration and licence (LGPL v2.1+): [SFD compatibility](docs/FAF_SFD_COMPATIBILITY.md#ffmpeg-dependency-and-build).
+
+Monocypher 4.0.2 (BSD-2-Clause or CC0, at the user's choice) encrypts and authenticates the net channel's datagrams: [net channel](docs/NET_CHANNEL.md).
 
 ### Profiling with Tracy
 
@@ -85,7 +114,7 @@ The client collects only while a profiler is connected (`TRACY_ON_DEMAND`): star
 | `data/fafengine/` | Engine-owned Lua hooks copied next to the exe (for example the Graphics API option) |
 | `tools/` | Go multiplayer test harness (`mpemu`) and checkers; see [tools/README.md](tools/README.md) |
 | `scripts/` | Sampling profiler, benchmark and replay helpers (`perf/`), shader and texture checks (`effects/`), and the hang stack dumper (`stackdump.cpp`) |
-| `docs/` | [Performance](docs/PERFORMANCE.md), [Switches](docs/SWITCHES.md), [Retail replay parity](docs/RETAIL_REPLAY_PARITY.md), [PR replay check](docs/PR_REPLAY_CHECK.md), [Renderer backends](docs/RENDERER_BACKENDS.md), [SFD compatibility](docs/FAF_SFD_COMPATIBILITY.md) |
+| `docs/` | [Performance](docs/PERFORMANCE.md), [Switches](docs/SWITCHES.md), [Retail replay parity](docs/RETAIL_REPLAY_PARITY.md), [PR replay check](docs/PR_REPLAY_CHECK.md), [Renderer backends](docs/RENDERER_BACKENDS.md), [SFD compatibility](docs/FAF_SFD_COMPATIBILITY.md), [Desync diagnostics](docs/DESYNC_DIAGNOSTICS.md) |
 
 ## Libraries the engine uses
 
@@ -100,6 +129,11 @@ All of them are fetched by CMake configure at the exact version below, patched w
 | FFmpeg | 7.1.3 (LGPL) | [Draiget/ffmpeg-mirror](https://github.com/Draiget/ffmpeg-mirror) (submodule) | none; linked statically, for SFD movies in place of CRI Sofdec/ADX |
 | FX11 | bec3b8fc | [microsoft/FX11](https://github.com/microsoft/FX11) (submodule) | none |
 | Vulkan headers | 1.4.304 | [KhronosGroup/Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) (submodule) | none |
+| libjuice | 1.7.4 (MPL-2.0) | [v1.7.4 source archive](https://github.com/paullouisageneau/libjuice/archive/refs/tags/v1.7.4.tar.gz) | none; built by `cmake/deps/libjuice` as the ICE agent of `src/netlink` |
+| libdatachannel | 0.24.6 (MPL-2.0) | [v0.24.6 source archive](https://github.com/paullouisageneau/libdatachannel/archive/refs/tags/v0.24.6.tar.gz) | none; built by `cmake/deps/libdatachannel` without media and WebSocket, on `faf_juice`, for WebRTC data channels (#238) |
+| usrsctp | commit fec583d5, the one libdatachannel 0.24.6 pins (BSD-3-Clause) | [commit archive](https://github.com/sctplab/usrsctp/archive/fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz) | none; SCTP for libdatachannel, without IPv4/IPv6 sockets |
+| plog | commit 94899e0b, the one libdatachannel 0.24.6 pins (MIT) | [commit archive](https://github.com/SergiusTheBest/plog/archive/94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz) | none; headers only, libdatachannel's log |
+| Mbed TLS | 3.6.7 LTS (Apache-2.0 or GPL-2.0-or-later; used under Apache-2.0) | [release archive](https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2) | none; DTLS for libdatachannel, `MBEDTLS_SSL_DTLS_SRTP` turned on through `cmake/deps/libdatachannel/faf_mbedtls_config.h` |
 | DirectX Shader Compiler | 1.9.2609 | [DXC release](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.9.2609) | none |
 | DirectX SDK | June 2010 | an installed SDK, else extracted from [Microsoft's installer](https://download.microsoft.com/download/A/E/7/AE743F1F-632B-4809-87A9-AA1BB3458E31/DXSDK_Jun10.exe) | none |
 

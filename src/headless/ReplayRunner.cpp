@@ -34,6 +34,7 @@
 #include "moho/net/IClientMgrUIInterface.h"
 #include "moho/sim/CWldMap.h"
 #include "moho/sim/CWldSessionLoaderImpl.h"
+#include "moho/sim/DesyncRecorder.h"
 #include "moho/sim/FafGameVersion.h"
 #include "moho/sim/RRuleGameRules.h"
 #include "moho/sim/CSimArmyEconomyInfo.h"
@@ -51,6 +52,11 @@
 // The wire format and the remote client (src/remote), built only with FAF_SERVER_MODE:
 // --wire-stats, --loopback and --command-check (docs/SWITCHES.md, "headless").
 #include "headless/ReplayCommandCheck.h"
+#include "headless/ReplayChangeSetCheck.h"
+#include "headless/ReplayOracleCheck.h"
+#include "headless/ReplayInboundCheck.h"
+#include "headless/ReplayViewFrameStats.h"
+#include "headless/ReplayViewPacketCheck.h"
 #include "headless/ReplayWireStats.h"
 #include "remote/ContentTables.h"
 #endif
@@ -401,6 +407,12 @@ namespace faf::headless
       sessionInfo->mClientManager->SetUIInterface(&gReplayClientEvents);
     }
 
+    // Issue #217: a dump this run writes (`/desyncdumpbeat`) names the map and game mods, and
+    // says it came from a replay, as a game's CWldSession would tell the recorder.
+    moho::CDesyncRecorder::SetSessionInfo(
+      sessionInfo->mMapName.c_str(), launchInfo->mGameMods.c_str(), true, sessionInfo->mIsMultiplayer
+    );
+
     moho::SWldGameData gameData{};
     if (!LoadScenario(*sessionInfo, gameData, result.error)) {
       moho::ReleaseWldGameDataHandles(&gameData);
@@ -415,6 +427,22 @@ namespace faf::headless
     std::unique_ptr<LuaPlus::LuaState> sessionState(gameData.mState);
     std::unique_ptr<moho::RRuleGameRules> rules(gameData.mGameRules);
     std::unique_ptr<moho::CWldMap> wldMap(gameData.mWldMap);
+
+    // Plan WPL.16: the blueprints in the order the rules loaded them (their ordinals), to
+    // compare between platforms.
+    if (!options.blueprintOrderPath.empty()) {
+      std::FILE* orderFile = nullptr;
+      if (fopen_s(&orderFile, options.blueprintOrderPath.c_str(), "w") != 0 || orderFile == nullptr) {
+        result.error = "cannot write " + options.blueprintOrderPath;
+        return result;
+      }
+      int ordinal = 0;
+      for (; const moho::RBlueprint* const blueprint = rules->GetBlueprintFromOrdinal(ordinal); ++ordinal) {
+        std::fprintf(orderFile, "%d %s\n", ordinal, blueprint->mBlueprintId.c_str());
+      }
+      std::fclose(orderFile);
+      std::printf("[%s] blueprint order: %d blueprints written to %s\n", label, ordinal, options.blueprintOrderPath.c_str());
+    }
 
 #if FAF_SERVER_MODE
     // The wire format's content tables (plan WP7.2), as a server or client builds them at load.
@@ -457,6 +485,9 @@ namespace faf::headless
     if (options.replayLead >= 0) {
       moho::sim_ReplayLead = options.replayLead;
     }
+    if (!options.luaPairsPath.empty()) {
+      moho::sim_LuaPairsDumpPath = options.luaPairsPath.c_str();
+    }
 
     // `--sync-writers`: the Sync write recorder goes in before the sim (and its scripts) exist.
     CSyncWriters syncWriters;
@@ -471,6 +502,68 @@ namespace faf::headless
     if (options.commandCheck) {
       commandCheck = std::make_unique<CReplayCommandCheck>(*rules);
       commandCheck->Install();
+    }
+
+    // `--oracle-check`: after every `Sim::Sync`, on the sim's thread.
+    std::unique_ptr<CReplayOracleCheck> oracleCheck;
+    if (options.oracleCheck) {
+      oracleCheck = std::make_unique<CReplayOracleCheck>(options.oracleDigestsPath);
+      if (!oracleCheck->IsOpen()) {
+        result.error = "cannot write " + options.oracleDigestsPath;
+        return result;
+      }
+      oracleCheck->Install();
+    }
+
+    // `--changeset-check`: the sync walk's observer too, so not with `--oracle-check`.
+    std::unique_ptr<CReplayChangeSetCheck> changeSetCheck;
+    if (options.changeSetCheck) {
+      changeSetCheck = std::make_unique<CReplayChangeSetCheck>();
+      changeSetCheck->Install();
+    }
+
+    // `--view-packets`: the sync walk's observer as well.
+    std::unique_ptr<CReplayViewPacketCheck> viewPackets;
+    if (!options.viewPacketsPath.empty()) {
+      viewPackets = std::make_unique<CReplayViewPacketCheck>(
+        options.viewPacketsArmy, options.viewPacketsPath, options.viewPacketsEntriesPath,
+        static_cast<std::uint32_t>(options.viewPacketsEntriesEvery)
+      );
+      if (!viewPackets->IsOpen()) {
+        result.error = "cannot write " + options.viewPacketsPath
+          + (options.viewPacketsEntriesPath.empty() ? "" : " or " + options.viewPacketsEntriesPath);
+        return result;
+      }
+      viewPackets->Install();
+    }
+
+    // `--view-frames`: the sync walk's observer as well.
+    std::unique_ptr<CReplayViewFrameStats> viewFrames;
+    if (!options.viewFramesPath.empty()) {
+      viewFrames = std::make_unique<CReplayViewFrameStats>(
+        options.viewFramesPath, tables, mapBounds.Max.x - mapBounds.Min.x, mapBounds.Max.z - mapBounds.Min.z
+      );
+      if (!viewFrames->IsOpen()) {
+        result.error = "cannot write " + options.viewFramesPath;
+        return result;
+      }
+      if (options.viewIds) {
+        viewFrames->EnableIdMaps();
+      }
+      viewFrames->SetParallel(options.parallelViews);
+      if (options.spy) {
+        viewFrames->EnableSpy();
+      }
+      viewFrames->SetChannel(
+        static_cast<std::uint32_t>(options.viewLossPercent), static_cast<std::uint32_t>(options.viewAckDelay)
+      );
+      viewFrames->Install();
+    }
+    // `--inbound-check`: the decoder's messages through view ids and back (with --view-ids).
+    std::unique_ptr<CReplayInboundCheck> inboundCheck;
+    if (options.inboundCheck && viewFrames) {
+      inboundCheck = std::make_unique<CReplayInboundCheck>(*rules, *viewFrames);
+      inboundCheck->Install();
     }
 #endif
 
@@ -767,6 +860,12 @@ namespace faf::headless
             manager->Cleanup();
           }
         }
+
+        // The sim's thread keeps running beats after the game-over packet. Packets it queued
+        // meanwhile are not part of the game, and how many there are depends on thread timing.
+        if (result.gameOver) {
+          break;
+        }
       }
 
       if (elapsed - lastReport >= 30.0) {
@@ -785,6 +884,11 @@ namespace faf::headless
       }
     }
 
+#if FAF_SERVER_MODE
+    // The sim's thread keeps running beats after a time limit ends the loop; the sync-walk
+    // observers are read (and destroyed) below, so none of them may be called from here on.
+    moho::Sim::SetSyncObserver(nullptr);
+#endif
     result.playSeconds = SecondsSince(playStart);
     result.mismatches = ChecksumMismatchCount();
     if (digestFile != nullptr) {
@@ -813,6 +917,25 @@ namespace faf::headless
     if (commandCheck) {
       result.commandSummary = commandCheck->Summary();
       result.commandFailures = commandCheck->Failures();
+    }
+    if (oracleCheck) {
+      result.oracleSummary = oracleCheck->Summary();
+      result.oracleFailures = oracleCheck->Failures();
+    }
+    if (changeSetCheck) {
+      result.changeSetSummary = changeSetCheck->Summary();
+      result.changeSetFailures = changeSetCheck->Failures();
+    }
+    if (viewPackets) {
+      result.viewPacketsSummary = viewPackets->Summary();
+    }
+    if (viewFrames) {
+      result.viewFramesSummary = viewFrames->Summary();
+      result.viewFramesFailures = viewFrames->Failures();
+    }
+    if (inboundCheck) {
+      result.inboundSummary = inboundCheck->Summary();
+      result.inboundFailures = inboundCheck->Failures();
     }
 #endif
     if (!options.syncKeysPath.empty()) {

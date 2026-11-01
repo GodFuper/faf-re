@@ -54,9 +54,9 @@ set(_faf_client_only_patterns
   "^moho/console/ClientConCommands\\.cpp$"
   # The user world's vision (what the focus army sees, for drawing).
   "^moho/vision/VisionDB\\.cpp$"
-  # The lobby, GPGNet and LAN discovery (the game connection and the
-  # replay stream stay).
-  "^moho/net/(CLobby|CLobbyTypeInfo|CGpgNetInterface|CDiscoveryService|CDiscoveryServiceTypeInfo)\\.cpp$"
+  # The lobby, GPGNet, its in-engine peer links and LAN discovery (the game
+  # connection and the replay stream stay).
+  "^moho/net/(CLobby|CLobbyTypeInfo|CGpgNetInterface|NetlinkPeers|CDiscoveryService|CDiscoveryServiceTypeInfo)\\.cpp$"
   # The user world's client-manager UI callbacks (the interface's defaults stay).
   "^moho/net/CWldUiInterface\\.cpp$"
   # The user session's listeners (idle units, pause, selection) and its save data.
@@ -66,7 +66,9 @@ set(_faf_client_only_patterns
   "^moho/misc/SessionStartup\\.cpp$"
   # The crash dialog (window, clipboard, shell; CrashReport.cpp writes the
   # report and the minidump without it).
-  "^gpg/core/diagnostics/CrashReportDialog\\.cpp$")
+  "^gpg/core/diagnostics/CrashReportDialog\\.cpp$"
+  # The frame-stall sampler (FAF_FRAME_SAMPLER; the client's frame loop marks it).
+  "^gpg/core/diagnostics/FrameSampler\\.cpp$")
 
 set(_faf_sim_patterns
   # Decals the sim creates and expires (CDecalBuffer::CleanupTick runs on

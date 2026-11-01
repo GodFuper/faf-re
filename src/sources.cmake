@@ -35,6 +35,7 @@ set(FAF_ENGINE_SOURCES
   legacy/containers/Set.cpp
   legacy/containers/String.cpp
   legacy/exceptions/StdExcept.cpp
+  legacy/math/Libm.cpp
   legacy/math/X87Math.cpp
   lua/LuaAssertion.cpp
   gpg/gal/backends/d3d10/D3D10Interfaces.cpp
@@ -182,6 +183,8 @@ set(FAF_ENGINE_SOURCES
   moho/misc/FileWaitHandleSet.cpp
   moho/net/Common.cpp
   moho/net/NetConVars.cpp
+  moho/net/NetPeerTransport.cpp
+  moho/net/NetlinkPeers.cpp
   moho/net/IClient.cpp
   moho/net/IMessageReceiver.cpp
   moho/net/INetConnection.cpp
@@ -226,6 +229,7 @@ set(FAF_ENGINE_SOURCES
   gpg/core/diagnostics/CrashReportDialog.cpp
   gpg/core/diagnostics/ProbeWatch.cpp
   gpg/core/diagnostics/FrameSampler.cpp
+  gpg/core/diagnostics/BuildInfo.cpp
   lua/LuaCrashDump.cpp
   lua/LuaMemAccounting.cpp
   lua/LuaGcEventLog.cpp
@@ -393,6 +397,9 @@ set(FAF_ENGINE_SOURCES
   moho/sim/SimDriver.cpp
   moho/sim/SimDriverNetworkStats.cpp
   moho/sim/SimWorkerPool.cpp
+  moho/sim/DesyncRecorder.cpp
+  moho/sim/DesyncTelemetry.cpp
+  moho/sim/SimJobStream.cpp
   moho/sim/UnitUpdateFill.cpp
   moho/sim/SSyncFilter.cpp
   moho/sim/SSTIArmyConstantData.cpp
@@ -611,6 +618,7 @@ set(FAF_ENGINE_SOURCES
   moho/animation/CSlaveManipulator.cpp
   moho/animation/CStorageManipulator.cpp
   moho/animation/CSlideManipulator.cpp
+  moho/animation/PoseJobs.cpp
   moho/animation/CThrustManipulator.cpp
   moho/sim/CSimConCommand.cpp
   moho/sim/CSimConFunc.cpp
@@ -896,6 +904,7 @@ set(FAF_ENGINE_SOURCES
   moho/render/StrategicIconRenderer.cpp
   moho/render/SelectionBracketGpuRenderer.cpp
   moho/render/WorldShapeGpuRenderer.cpp
+  moho/render/RangeGpuRenderer.cpp
   moho/ui/UiWorldShapes.cpp
   moho/render/ProjectileIconRenderer.cpp
   moho/render/GpuPathSettings.cpp

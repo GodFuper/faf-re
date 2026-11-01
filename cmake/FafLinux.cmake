@@ -66,6 +66,22 @@ set(FAF_LINUX_MS_DIALECT -fms-extensions -fms-volatile)
 add_subdirectory("${PROJECT_SOURCE_DIR}/cmake/deps/wildmagic" "${CMAKE_BINARY_DIR}/deps/wildmagic")
 add_subdirectory("${PROJECT_SOURCE_DIR}/cmake/deps/zlib" "${CMAKE_BINARY_DIR}/deps/zlib")
 
+# The net channel (src/remote/net, plan WP10) and its one download, Monocypher, pinned in
+# cmake/FafDependencies.cmake; the Windows-only dependencies there are skipped. Without the
+# download (FAF_FETCH_DEPENDENCIES=OFF, or no network) the channel is left out and the
+# simulation targets build as before.
+option(FAF_FETCH_DEPENDENCIES "Fetch the net channel's Monocypher download at configure time" ON)
+if(FAF_FETCH_DEPENDENCIES)
+  set(FAF_DEPENDENCIES_ONLY monocypher)
+  include(FafDependencies)
+endif()
+add_subdirectory("${PROJECT_SOURCE_DIR}/cmake/deps/monocypher" "${CMAKE_BINARY_DIR}/deps/monocypher")
+add_subdirectory("${PROJECT_SOURCE_DIR}/src/remote/net" "${CMAKE_BINARY_DIR}/remote/net")
+if(TARGET faf_netchannel)
+  add_executable(faf_netchannel_tests EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tests/remote/net/NetChannelTests.cpp")
+  target_link_libraries(faf_netchannel_tests PRIVATE faf_netchannel faf_monocypher)
+endif()
+
 # --- faf_sim ----------------------------------------------------------------------------
 # The simulation's translation units (src/sim_sources.cmake), in the engine's
 # order, as an object library: every object is linked, so every static
@@ -84,7 +100,8 @@ list(FILTER FAF_SIM_SOURCES EXCLUDE REGEX "^gpg/core/diagnostics/(CrashHooks|Cra
 # The lockstep transport: Winsock sockets driven by WSAEventSelect. Linux replays and
 # serves games without it (the server has its own channel, plan D3); moho/net/Common.cpp's
 # connector factories fail here as on a Windows host without Winsock.
-list(FILTER FAF_SIM_SOURCES EXCLUDE REGEX "^moho/net/(CNetDatagramSocketImpl|CNetTCPBuf|CNetTCPConnection|CNetTCPConnector|CNetTCPServerImpl|CNetUDPConnection|CNetUDPConnector|INetDatagramSocket|INetTCPServer|INetTCPSocket)\\.cpp$")
+# NetPeerTransport (issue #232) belongs to CNetUDPConnector and goes with it.
+list(FILTER FAF_SIM_SOURCES EXCLUDE REGEX "^moho/net/(CNetDatagramSocketImpl|CNetTCPBuf|CNetTCPConnection|CNetTCPConnector|CNetTCPServerImpl|CNetUDPConnection|CNetUDPConnector|NetPeerTransport|INetDatagramSocket|INetTCPServer|INetTCPSocket)\\.cpp$")
 
 set(_faf_sim_files "")
 foreach(_src IN LISTS FAF_SIM_SOURCES)
@@ -114,6 +131,10 @@ add_library(faf_sim OBJECT ${_faf_sim_files})
 # (tests/sim_math) share without depending on every faf_sim object.
 add_library(faf_sim_settings INTERFACE)
 target_link_libraries(faf_sim PUBLIC faf_sim_settings)
+
+# The git commit for gpg/core/diagnostics/BuildInfo.cpp, read on every build.
+include(FafBuildInfo)
+faf_build_info(faf_sim x64-linux)
 
 # The x64 half of legacy/math/X87Math.cpp, in GNU syntax for System V (the
 # Windows build assembles X87Math64.asm, plan WPL.10).

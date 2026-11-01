@@ -25,6 +25,15 @@ namespace moho
   class IAniManipulator;
   class VTransform;
 
+  /**
+   * Engine addition, headless `--bone-stats` (dedicated-server plan WP8): when set,
+   * `UpdateManipulators` calls it once per actor update with `manipulatorClass == nullptr` and
+   * `boneIndex == -1` (a fresh pose), then once for every bone whose local transform a
+   * manipulator's update changed, with that manipulator's RTTI class name. Null in the game.
+   */
+  using AniBoneWriteHook = void (*)(const CAniPose* pose, const char* manipulatorClass, int boneIndex);
+  extern AniBoneWriteHook gAniBoneWriteHook;
+
   class CAniActor
   {
   public:
@@ -123,6 +132,9 @@ namespace moho
      * manipulator in precedence order.
      */
     void UpdateManipulators(const VTransform& worldTransform);
+
+    /// Engine addition (sim_ParallelPose): true when `test` holds for every enabled manipulator.
+    [[nodiscard]] bool AllEnabledManipulators(bool (*test)(const IAniManipulator& manipulator)) const;
 
     /**
      * Address: 0x0063AD40 (FUN_0063AD40, Moho::CAniActor::ResolveBoneIndex)
