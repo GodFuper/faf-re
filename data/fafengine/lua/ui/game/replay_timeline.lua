@@ -225,8 +225,14 @@ local ScrubbingOverlay = ClassUI(Group) {
         if not self:IsHidden() then
             return
         end
+        local curTick = GetCurrentTick()
+        self._isRewind = (targetTick and targetTick < curTick)
         if targetTick then
-            self.targetText:SetText(string.format("Advancing to %s", FormatTicks(targetTick)))
+            if self._isRewind then
+                self.targetText:SetText(string.format("Rewinding to %s", FormatTicks(targetTick)))
+            else
+                self.targetText:SetText(string.format("Advancing to %s", FormatTicks(targetTick)))
+            end
         end
         self.barFill.Width:Set(0)
         self.percentText:SetText("0%")
@@ -263,7 +269,11 @@ local ScrubbingOverlay = ClassUI(Group) {
             return
         end
         if prog.targetTick then
-            self.targetText:SetText(string.format("Advancing to %s", FormatTicks(prog.targetTick)))
+            if self._isRewind then
+                self.targetText:SetText(string.format("Rewinding to %s", FormatTicks(prog.targetTick)))
+            else
+                self.targetText:SetText(string.format("Advancing to %s", FormatTicks(prog.targetTick)))
+            end
         end
         local pct = prog.progress
         if not pct or pct < 0 then
@@ -404,33 +414,20 @@ function CreateReplayTimeline(parent)
 
     local isDragging = false
 
-    -- Constrain dragging to forward only (cannot seek backward into the past)
-    local oldCalc = slider.CalculateValueFromMouse
-    slider.CalculateValueFromMouse = function(self, x, y)
-        local curTick = GetCurrentTick()
-        local val = oldCalc(self, x, y)
-        if val < curTick then
-            return curTick
-        end
-        return val
-    end
-
     slider.OnBeginChange = function(self)
         isDragging = true
         thumbPreview:Show()
     end
 
     slider.OnScrub = function(self, val)
-        local curTick = GetCurrentTick()
-        val = math.max(curTick, math.floor(val))
+        val = math.max(0, math.floor(val))
         curTimeLabel:SetText(FormatTicks(val))
         thumbPreview:SetText(FormatTicks(val))
     end
 
     slider.OnValueChanged = function(self, val)
         if isDragging then
-            local curTick = GetCurrentTick()
-            val = math.max(curTick, math.floor(val))
+            val = math.max(0, math.floor(val))
             curTimeLabel:SetText(FormatTicks(val))
             thumbPreview:SetText(FormatTicks(val))
         end
@@ -447,11 +444,23 @@ function CreateReplayTimeline(parent)
         local curTick = GetCurrentTick()
         local targetTick = math.floor(newValue)
 
-        -- Replays cannot roll back in simulation memory without reloading
-        if targetTick <= curTick then
+        if targetTick < 0 then
+            targetTick = 0
+        end
+
+        -- If target is the exact current tick, do nothing
+        if targetTick == curTick then
             slider:SetValue(curTick)
             curTimeLabel:SetText(FormatTicks(curTick))
             return
+        end
+
+        -- If rewinding backward, clear unit selection to prevent invalid entity references in UI
+        if targetTick < curTick then
+            local ok, sel = pcall(import, '/lua/ui/game/selection.lua')
+            if ok and sel and is_callable(sel.ClearSelection) then
+                pcall(sel.ClearSelection)
+            end
         end
 
         DoScrub(targetTick)
