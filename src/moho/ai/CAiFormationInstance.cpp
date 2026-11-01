@@ -1,3 +1,4 @@
+#include "moho/command/SSTITarget.h"
 #include "moho/ai/CAiFormationInstance.h"
 #include "legacy/math/X87Math.h"
 
@@ -1080,7 +1081,7 @@ namespace
   {
     static gpg::RType* type = nullptr;
     if (!type) {
-      type = gpg::LookupRType(typeid(moho::EntId));
+      type = gpg::LookupRType(typeid(moho::EntIdValue));
     }
     return type;
   }

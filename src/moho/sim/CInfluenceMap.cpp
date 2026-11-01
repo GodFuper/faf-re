@@ -1,3 +1,4 @@
+#include "moho/command/SSTITarget.h"
 #include "legacy/algorithms/Sort.h"
 #include "CInfluenceMap.h"
 
@@ -2787,7 +2788,7 @@ namespace moho
 
     static gpg::RType* entIdType = nullptr;
     if (entIdType == nullptr) {
-      entIdType = gpg::LookupRType(typeid(moho::EntId));
+      entIdType = gpg::LookupRType(typeid(moho::EntIdValue));
     }
     archive->Read(entIdType, &entityId, ownerRef);
 
@@ -2838,7 +2839,7 @@ namespace moho
 
     static gpg::RType* entIdType = nullptr;
     if (entIdType == nullptr) {
-      entIdType = gpg::LookupRType(typeid(moho::EntId));
+      entIdType = gpg::LookupRType(typeid(moho::EntIdValue));
     }
     archive->Write(entIdType, &entityId, ownerRef);
 

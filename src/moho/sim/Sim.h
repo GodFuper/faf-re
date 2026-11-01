@@ -1192,6 +1192,12 @@ namespace moho
     void SaveState(gpg::WriteArchive* archive);
 
     /**
+     * Restores simulation state in-place from the provided read archive,
+     * refreshes heightfield bounds, intel vis handles, and triggers Lua OnPostLoad().
+     */
+    void RestoreState(gpg::ReadArchive* archive);
+
+    /**
      * Address: 0x007457F0 (FUN_007457F0, ?Shutdown@Sim@Moho@@QAEXXZ)
      *
      * What it does:

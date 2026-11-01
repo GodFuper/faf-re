@@ -3823,6 +3823,11 @@ void Sim::SerArmies(gpg::ReadArchive* const archive)
   unsigned int armyCount = 0u;
   archive->ReadUInt(&armyCount);
 
+  for (std::size_t i = 0; i < mArmiesList.size(); ++i) {
+    delete mArmiesList[i];
+  }
+  mArmiesList.clear();
+
   mArmiesList.resize(static_cast<std::size_t>(armyCount));
 
   gpg::RRef nullOwner{};
@@ -3996,6 +4001,9 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
 
   CCommandDB* commands = nullptr;
   archive->ReadPointerOwned(&commands, &ownerRef);
+  if (mCommandDB != nullptr) {
+    mCommandDB->commands.clear();
+  }
   delete std::exchange(mCommandDB, commands);
   archive->ReadUInt(&mReserved98C);
 
@@ -6273,8 +6281,56 @@ void Sim::Setup(LaunchInfoNew* const info)
  * re-binds each loaded prop into the entity DB bounded-prop queue, then re-syncs
  * the playable rectangle and fires the `OnPostLoad` Lua callback.
  */
+void Sim::RestoreState(gpg::ReadArchive* const archive)
+{
+  if (!archive) {
+    return;
+  }
+
+  // 1. Teardown existing task stages while all entities and armies are still alive
+  mTaskStageA.Teardown();
+  mDiskWatcherTaskStage.Teardown();
+  mTaskStageB.Teardown();
+
+  // 2. Unlink all entities from mCoordEntities
+  while (!mCoordEntities.empty()) {
+    mCoordEntities.pop_front();
+  }
+
+  // Deserialize this Sim instance from the saved archive.
+  gpg::RRef ownerRef{};
+  try {
+    if (!Sim::sType) {
+      Sim::sType = gpg::LookupRType(typeid(Sim));
+    }
+    archive->Read(Sim::sType, this, ownerRef);
+  } catch (const std::exception& error) {
+    gpg::Warnf("Error restoring saved game state: %s", error.what());
+    archive->EndSection(true);
+    throw;
+  }
+  archive->EndSection(false);
+
+  mCurBeat = mCurTick + 1;
+  mContext.Reset();
+  for (std::uint32_t b = mCurTick + 1; b <= mCurTick + 128; ++b) {
+    mSimHashes[b & 0x7Fu] = gpg::MD5Digest{};
+  }
+
+  // Refresh the heightfield bounds to the full grid.
+  if (mMapData && mMapData->mHeightField) {
+    CHeightField* const heightField = mMapData->mHeightField.get();
+    const gpg::Rect2i fullBounds{0, 0, 0x7FFFFFFF, 0x7FFFFFFF};
+    heightField->UpdateBounds(fullBounds);
+  }
+}
+
 void Sim::Load(LaunchInfoLoad* const loadInfo)
 {
+  if (loadInfo != nullptr && loadInfo->mReadArchive != nullptr) {
+    RestoreState(loadInfo->mReadArchive);
+    return;
+  }
   gpg::ReadArchive* const archive = loadInfo->mReadArchive;
 
   // Deserialize this Sim instance from the saved archive. A failure is logged,
