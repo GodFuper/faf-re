@@ -828,6 +828,7 @@ namespace moho
     /// wrote it before queueing the packet and rewrites the slot only 128 beats later. Inline
     /// and unused by the client: no layout or code change in main.
     [[nodiscard]] const Sim* GetSimForReplayCheck() const noexcept { return mSim.get(); }
+    [[nodiscard]] Sim* GetSim() const noexcept { return mSim.get(); }
 
   private:
     /**

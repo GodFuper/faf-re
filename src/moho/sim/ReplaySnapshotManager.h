@@ -1,3 +1,5 @@
+#include "boost/shared_ptr.h"
+#include <cstdio>
 #pragma once
 
 #include "gpg/core/algorithms/MD5.h"
@@ -18,6 +20,7 @@ namespace moho
     std::int32_t beat{0};
     std::uint64_t streamOffset{0};
     gpg::MD5Digest simHash{};
+    boost::shared_ptr<std::FILE> file{};
     std::vector<std::uint8_t> data{};
   };
 

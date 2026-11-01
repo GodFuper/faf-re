@@ -1,5 +1,12 @@
 #include "moho/sim/WldSessionState.h"
 #include "CWldSession.h"
+#include "moho/sim/ReplaySnapshotManager.h"
+#include "moho/misc/CSaveGameRequestImpl.h"
+#include "gpg/core/containers/ReadArchive.h"
+#include "gpg/core/containers/WriteArchive.h"
+#include "moho/net/CReplayClient.h"
+#include "moho/net/CClientManagerImpl.h"
+#include "moho/sim/SimDriver.h"
 
 #include "platform/WxWidgets.h"
 #include <wx/app.h>
@@ -262,6 +269,10 @@ namespace moho
   std::int32_t sim_ScrubMaxBeatsPerFrame = 500;
   float sim_ScrubTimeBudgetMs = 15.0f;
   std::int32_t CWldSession::sPendingRestartScrubTarget = -1;
+std::int32_t sim_ReplaySnapshotInterval = 300;
+  std::int32_t sim_ReplaySnapshotMax = 8;
+  static std::unique_ptr<ReplaySnapshotManager> sSnapshotManager;
+
 
   namespace
   {
@@ -275,6 +286,17 @@ namespace moho
       "sim_ScrubTimeBudgetMs",
       "Simulation CPU time budget in milliseconds per frame during replay fast-forward scrubbing before yielding to UI.",
       &sim_ScrubTimeBudgetMs
+    );
+    TConVar<int> gTConVar_sim_ReplaySnapshotInterval(
+      "sim_ReplaySnapshotInterval",
+      "Simulation beats interval between replay in-memory state snapshots.",
+      &sim_ReplaySnapshotInterval
+    );
+
+    TConVar<int> gTConVar_sim_ReplaySnapshotMax(
+      "sim_ReplaySnapshotMax",
+      "Maximum number of replay in-memory snapshots preserved in the ring buffer.",
+      &sim_ReplaySnapshotMax
     );
   } // namespace
 
@@ -6927,6 +6949,11 @@ namespace moho
     mScrubStartBeat = 0;
     mIsScrubbing = false;
     mTotalReplayBeats = sessionInfo.mTotalBeats;
+    if (sessionInfo.mIsReplay) {
+      sSnapshotManager = std::make_unique<ReplaySnapshotManager>(
+        sim_ReplaySnapshotMax > 0 ? static_cast<std::size_t>(sim_ReplaySnapshotMax) : 8
+      );
+    }
 
     // Engine addition (issues #216, #218): the desync dump's header names the map, the game mods
     // and the session kind; telemetry is sent for live multiplayer games only.
@@ -8945,6 +8972,61 @@ namespace moho
    * Engine addition: Initiates fast-forward / scrubbing to `targetBeat`.
    * If `targetBeat < mGameTick`, triggers session restart with handover.
    */
+  static void CaptureReplaySnapshot(CWldSession* session, const std::int32_t beat, const bool isBase)
+  {
+    if (session == nullptr || !session->IsReplay || sSnapshotManager == nullptr) {
+      return;
+    }
+
+    CSimDriver* const simDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
+    if (simDriver == nullptr) {
+      return;
+    }
+
+    Sim* const sim = simDriver->GetSim();
+    if (sim == nullptr) {
+      return;
+    }
+
+    CClientManagerImpl* const clientMgr = simDriver->GetClientManager();
+    CReplayClient* const replayClient = (clientMgr != nullptr && !clientMgr->mClients.empty())
+      ? dynamic_cast<CReplayClient*>(clientMgr->mClients[0])
+      : nullptr;
+
+    if (replayClient == nullptr) {
+      return;
+    }
+
+    std::FILE* rawFile = nullptr;
+    if (tmpfile_s(&rawFile) != 0 || rawFile == nullptr) {
+      return;
+    }
+    setvbuf(rawFile, nullptr, _IOFBF, 256 * 1024);
+
+    ReplaySnapshot snapshot;
+    snapshot.beat = beat;
+    snapshot.streamOffset = replayClient->GetBeatStreamPosition(beat + 1);
+    if (snapshot.streamOffset == 0) {
+      snapshot.streamOffset = replayClient->GetStreamPosition();
+    }
+    snapshot.simHash = sim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+    snapshot.file.reset(rawFile, SFileStarCloser{});
+
+    try {
+      std::unique_ptr<gpg::WriteArchive> writeArchive(gpg::CreateBinaryWriteArchive(snapshot.file));
+      sim->SaveState(writeArchive.get());
+      std::fflush(snapshot.file.get());
+
+      if (isBase) {
+        sSnapshotManager->SetBaseSnapshot(std::move(snapshot));
+      } else {
+        sSnapshotManager->AddSnapshot(std::move(snapshot));
+      }
+    } catch (const std::exception& e) {
+      gpg::Warnf("Failed to capture replay snapshot at beat %d: %s", beat, e.what());
+    }
+  }
+
   void CWldSession::StartScrubToBeat(const std::int32_t targetBeat)
   {
     if (!IsReplay) {
@@ -8957,7 +9039,54 @@ namespace moho
     }
 
     if (clampedTarget <= mGameTick) {
-      CancelScrub();
+      if (sSnapshotManager == nullptr) {
+        CancelScrub();
+        return;
+      }
+
+      const ReplaySnapshot* const snap = sSnapshotManager->FindNearestSnapshot(clampedTarget);
+      if (snap == nullptr || !snap->file) {
+        CancelScrub();
+        return;
+      }
+
+      mIsScrubbing = true;
+      mScrubStartBeat = snap->beat;
+      mScrubTargetBeat = clampedTarget;
+
+      // 1. Rewind driver, client manager and replay stream
+      CSimDriver* const simDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
+      if (simDriver != nullptr) {
+        simDriver->RewindBeats(snap->beat);
+        if (CClientManagerImpl* const clientMgr = simDriver->GetClientManager()) {
+          clientMgr->RewindBeats(snap->beat);
+          if (!clientMgr->mClients.empty()) {
+            if (CReplayClient* const replayClient = dynamic_cast<CReplayClient*>(clientMgr->mClients[0])) {
+              replayClient->RewindStream(snap->streamOffset, snap->beat);
+            }
+          }
+        }
+      }
+
+      // 2. Restore Sim state
+      if (simDriver != nullptr) {
+        if (Sim* const sim = simDriver->GetSim()) {
+          std::fseek(snap->file.get(), 0, SEEK_SET);
+          std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(snap->file));
+          sim->RestoreState(readArchive.get());
+          std::fseek(snap->file.get(), 0, SEEK_SET);
+          sim->mSimHashes[static_cast<std::uint32_t>(snap->beat) & 0x7Fu] = snap->simHash;
+        }
+      }
+
+      mGameTick = snap->beat;
+      mTimeSinceLastTick = 0.0f;
+      SetSelectionUnits({});
+
+      if (clampedTarget == snap->beat) {
+        mIsScrubbing = false;
+        mScrubTargetBeat = -1;
+      }
       return;
     }
 
@@ -9064,6 +9193,8 @@ namespace moho
       if (mGameTick >= mScrubTargetBeat || (IsGameOver != 0) || (mTotalReplayBeats > 0 && mGameTick >= mTotalReplayBeats)) {
         mIsScrubbing = false;
         mScrubTargetBeat = -1;
+        mTimeSinceLastTick = 0.0f;
+        SetSelectionUnits({});
       }
     } else {
       // Drain the driver's sync queue. Bounded at 100 beats so a burst after a
@@ -9101,6 +9232,14 @@ namespace moho
       mTimeSinceLastTick = std::max(0.0f, std::min(remainder, 1.0f));
     } else if (wasScrubbing && !mIsScrubbing) {
       mTimeSinceLastTick = 0.0f;
+    }
+
+    if (IsReplay && !mIsScrubbing && sSnapshotManager != nullptr) {
+      if (sSnapshotManager->GetBaseSnapshot() == nullptr) {
+        CaptureReplaySnapshot(this, mGameTick, /*isBase=*/true);
+      } else if (sim_ReplaySnapshotInterval > 0 && mGameTick > 0 && (mGameTick % sim_ReplaySnapshotInterval == 0)) {
+        CaptureReplaySnapshot(this, mGameTick, /*isBase=*/false);
+      }
     }
 
     if (const boost::shared_ptr<UICommandGraph> commandGraph = GetCommandGraph(false)) {
@@ -15386,6 +15525,7 @@ namespace moho
     if (gWldFrameAction != EWldFrameAction::Preload && gWldFrameAction != EWldFrameAction::CreateSession) {
       CWldSession::sPendingRestartScrubTarget = -1;
     }
+    sSnapshotManager.reset();
 
     if (sSimDriver) {
       sSimDriver->ShutDown();
