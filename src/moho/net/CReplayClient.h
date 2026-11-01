@@ -92,6 +92,10 @@ namespace moho
      */
     void Start();
 
+    [[nodiscard]] std::uint64_t GetStreamPosition() const;
+    [[nodiscard]] std::uint64_t GetBeatStreamPosition(std::int32_t beat) const;
+    void RewindStream(std::uint64_t pos, std::int32_t beat);
+
   private:
     /**
      * Address: 0x0053D240 (FUN_0053D240)

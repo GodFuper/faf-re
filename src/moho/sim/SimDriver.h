@@ -671,6 +671,9 @@ namespace moho
      * Address: 0x0073B1B0 (FUN_0073B1B0)
      */
     void SetArmyIndex(int armyIndex) override;
+
+    void RewindBeats(int32_t beat);
+    void RewindBeatsLocked(int32_t beat);
     /**
      * Address context:
      * - FAF patch callback `cfunc_SetFocusArmySim` writes this lane directly.

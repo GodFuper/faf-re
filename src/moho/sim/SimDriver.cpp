@@ -825,6 +825,20 @@ void CSimDriver::PreparePendingSaveRequestLocked(boost::mutex::scoped_lock& lock
  * Unlocks the driver mutex, runs one `Sim::Sync` publish pass, relocks,
  * verifies historical checksums when available, and enqueues the sync packet.
  */
+void CSimDriver::RewindBeats(const int32_t beat)
+{
+  boost::mutex::scoped_lock lock(mLock);
+  RewindBeatsLocked(beat);
+}
+
+void CSimDriver::RewindBeatsLocked(const int32_t beat)
+{
+  mDispatchBeat = beat + 1;
+  mNextIssueBeat = beat + 1;
+  mLastDequeuedBeat = beat;
+  mSyncDataQueue.ClearAndDelete();
+}
+
 void CSimDriver::FinalizeSyncDispatchLocked(boost::mutex::scoped_lock& lock)
 {
   mActiveSyncFilter.CopyFrom(mPendingSyncFilter);
