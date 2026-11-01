@@ -949,6 +949,7 @@ set(FAF_ENGINE_SOURCES
   moho/sim/ISTIDriver.cpp
   moho/sim/ReconBlip.cpp
   moho/sim/CWldSession.cpp
+  moho/sim/ReplaySnapshotManager.cpp
   moho/sim/WldSessionState.cpp
   moho/sim/WldScenarioInfo.cpp
   moho/sim/BlueprintLoaderContext.cpp
