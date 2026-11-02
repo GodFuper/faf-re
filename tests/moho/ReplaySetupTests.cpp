@@ -11,6 +11,8 @@
 #include "moho/net/ECmdStreamOp.h"
 #include "moho/sim/WldSessionInfo.h"
 #include "moho/sim/CWldSession.h"
+#include "moho/sim/ReplaySnapshotManager.h"
+#include "moho/misc/CSaveGameRequestImpl.h"
 #include "moho/misc/LaunchInfoBase.h"
 #include "lua/LuaObject.h"
 #include "moho/lua/CScrLuaInitForm.h"
@@ -820,6 +822,29 @@ namespace
     std::vector<std::pair<std::int32_t, gpg::MD5Digest>> verifiedChecksums;
     std::vector<std::string> log;
 
+    struct SavedState
+    {
+      std::int32_t currentBeat{0};
+      std::uint8_t currentSource{0};
+      std::map<moho::EntId, std::map<std::string, std::string>> entityInfo;
+      std::vector<std::pair<std::int32_t, gpg::MD5Digest>> verifiedChecksums;
+      std::vector<std::string> log;
+    };
+
+    [[nodiscard]] SavedState SaveState() const
+    {
+      return {currentBeat, currentSource, entityInfo, verifiedChecksums, log};
+    }
+
+    void RestoreState(const SavedState& s)
+    {
+      currentBeat = s.currentBeat;
+      currentSource = s.currentSource;
+      entityInfo = s.entityInfo;
+      verifiedChecksums = s.verifiedChecksums;
+      log = s.log;
+    }
+
     void SetCommandSource(const moho::CommandSourceId sourceId) override
     {
       currentSource = sourceId;
@@ -1160,6 +1185,240 @@ namespace
     CHECK(sinkCancel.verifiedChecksums.size() == sinkNormal.verifiedChecksums.size());
   }
 
+  moho::ReplaySnapshot MakeMockSnapshot(const std::int32_t beat, const std::uint64_t streamOffset = 0)
+  {
+    moho::ReplaySnapshot snap;
+    snap.beat = beat;
+    snap.streamOffset = streamOffset;
+    snap.simHash = gpg::MD5Digest{{0x12345678, 0, 0, 0}};
+    std::FILE* raw = nullptr;
+    tmpfile_s(&raw);
+    snap.file.reset(raw, moho::SFileStarCloser());
+    return snap;
+  }
+
+  void TestReplayScrubbingForwardAndBackwardParity()
+  {
+    constexpr int kTotalBeats = 100;
+    const auto beats = BuildTestReplayStream(kTotalBeats);
+
+    // Initialize snapshot manager for the session
+    moho::CWldSession::InitSnapshotManager(8);
+    auto* const mgr = moho::CWldSession::GetSnapshotManager();
+    CHECK(mgr != nullptr);
+
+    // 1. Normal pacing run to establish baseline at beat 30 and beat 75
+    alignas(moho::CWldSession) std::uint8_t buffer[sizeof(moho::CWldSession)];
+    std::memset(buffer, 0, sizeof(buffer));
+    moho::CWldSession* const session = reinterpret_cast<moho::CWldSession*>(buffer);
+    session->IsReplay = true;
+    session->mTotalReplayBeats = kTotalBeats;
+    session->mGameTick = 0;
+    session->mScrubTargetBeat = -1;
+    session->mIsScrubbing = false;
+
+    ParityTestStateSink sink;
+    LuaPlus::LuaState lua(LuaPlus::LuaState::LIB_BASE);
+    msvc8::auto_ptr<gpg::Stream> recording;
+    moho::CDecoder decoder(&sink, recording, nullptr, &lua);
+
+    // Register base snapshot at beat 0
+    mgr->SetBaseSnapshot(MakeMockSnapshot(0));
+
+    // Advance to beat 30
+    while (session->mGameTick < 30) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    CHECK(session->mGameTick == 30);
+    const auto sinkState30 = sink.SaveState();
+    mgr->AddSnapshot(MakeMockSnapshot(30));
+
+    // Scrub forward from 30 to 75
+    session->StartScrubToBeat(75);
+    CHECK(session->IsScrubbing() == true);
+    CHECK(session->mScrubStartBeat == 30);
+    CHECK(session->mScrubTargetBeat == 75);
+
+    DispatchFrame(session, decoder, beats, 0.05f);
+    CHECK(session->mGameTick == 75);
+    CHECK(session->IsScrubbing() == false);
+
+    const gpg::MD5Digest goldenDigest75 = sink.ComputeStateDigest();
+    const auto goldenEntityInfo75 = sink.entityInfo;
+    const auto goldenChecksums75 = sink.verifiedChecksums;
+
+    // 2. Seek backward: user rewinds from 75 back to 45
+    session->StartScrubToBeat(45);
+    // Nearest snapshot <= 45 is at beat 30
+    CHECK(session->mGameTick == 30);
+    CHECK(session->mScrubStartBeat == 30);
+    CHECK(session->mScrubTargetBeat == 45);
+    CHECK(session->IsScrubbing() == true);
+
+    // Restore sink state from beat 30
+    sink.RestoreState(sinkState30);
+
+    // Dispatch turbo scrub frame: advances from 30 to 45
+    DispatchFrame(session, decoder, beats, 0.05f);
+    CHECK(session->mGameTick == 45);
+    CHECK(session->IsScrubbing() == false);
+    CHECK(session->mScrubTargetBeat == -1);
+
+    // 3. Scrub forward again from 45 to 75
+    session->StartScrubToBeat(75);
+    CHECK(session->IsScrubbing() == true);
+    DispatchFrame(session, decoder, beats, 0.05f);
+    CHECK(session->mGameTick == 75);
+    CHECK(session->IsScrubbing() == false);
+
+    // 4. Verify 100% bit-for-bit checksum & state digest parity
+    const gpg::MD5Digest pass2Digest75 = sink.ComputeStateDigest();
+    CHECK(AreDigestsEqual(pass2Digest75, goldenDigest75));
+    CHECK(sink.entityInfo == goldenEntityInfo75);
+    CHECK(sink.verifiedChecksums.size() == goldenChecksums75.size());
+    for (std::size_t i = 0; i < goldenChecksums75.size(); ++i) {
+      CHECK(sink.verifiedChecksums[i].first == goldenChecksums75[i].first);
+      CHECK(AreDigestsEqual(sink.verifiedChecksums[i].second, goldenChecksums75[i].second));
+    }
+
+    moho::CWldSession::ResetSnapshotManager();
+  }
+
+  void TestReplayScrubbingToBaseBeat0()
+  {
+    constexpr int kTotalBeats = 100;
+    const auto beats = BuildTestReplayStream(kTotalBeats);
+
+    moho::CWldSession::InitSnapshotManager(8);
+    auto* const mgr = moho::CWldSession::GetSnapshotManager();
+    CHECK(mgr != nullptr);
+
+    alignas(moho::CWldSession) std::uint8_t buffer[sizeof(moho::CWldSession)];
+    std::memset(buffer, 0, sizeof(buffer));
+    moho::CWldSession* const session = reinterpret_cast<moho::CWldSession*>(buffer);
+    session->IsReplay = true;
+    session->mTotalReplayBeats = kTotalBeats;
+    session->mGameTick = 0;
+    session->mScrubTargetBeat = -1;
+    session->mIsScrubbing = false;
+
+    ParityTestStateSink sink;
+    LuaPlus::LuaState lua(LuaPlus::LuaState::LIB_BASE);
+    msvc8::auto_ptr<gpg::Stream> recording;
+    moho::CDecoder decoder(&sink, recording, nullptr, &lua);
+
+    mgr->SetBaseSnapshot(MakeMockSnapshot(0));
+    const auto sinkState0 = sink.SaveState();
+
+    // Advance to beat 30 to get golden digest at 30
+    while (session->mGameTick < 30) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    const gpg::MD5Digest goldenDigest30 = sink.ComputeStateDigest();
+
+    // Advance to beat 60
+    while (session->mGameTick < 60) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    CHECK(session->mGameTick == 60);
+
+    // Seek backward to base beat 0
+    session->StartScrubToBeat(0);
+    CHECK(session->mGameTick == 0);
+    CHECK(session->IsScrubbing() == false);
+    CHECK(session->mScrubTargetBeat == -1);
+
+    sink.RestoreState(sinkState0);
+
+    // Playback back to beat 30
+    while (session->mGameTick < 30) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    CHECK(session->mGameTick == 30);
+
+    const gpg::MD5Digest replayedDigest30 = sink.ComputeStateDigest();
+    CHECK(AreDigestsEqual(replayedDigest30, goldenDigest30));
+
+    moho::CWldSession::ResetSnapshotManager();
+  }
+
+  void TestReplayRapidBidirectionalScrubbing()
+  {
+    constexpr int kTotalBeats = 100;
+    const auto beats = BuildTestReplayStream(kTotalBeats);
+
+    moho::CWldSession::InitSnapshotManager(8);
+    auto* const mgr = moho::CWldSession::GetSnapshotManager();
+    CHECK(mgr != nullptr);
+
+    alignas(moho::CWldSession) std::uint8_t buffer[sizeof(moho::CWldSession)];
+    std::memset(buffer, 0, sizeof(buffer));
+    moho::CWldSession* const session = reinterpret_cast<moho::CWldSession*>(buffer);
+    session->IsReplay = true;
+    session->mTotalReplayBeats = kTotalBeats;
+    session->mGameTick = 0;
+    session->mScrubTargetBeat = -1;
+    session->mIsScrubbing = false;
+
+    ParityTestStateSink sink;
+    LuaPlus::LuaState lua(LuaPlus::LuaState::LIB_BASE);
+    msvc8::auto_ptr<gpg::Stream> recording;
+    moho::CDecoder decoder(&sink, recording, nullptr, &lua);
+
+    // Setup snapshots and sink states at beats 0, 15, 30, 45, 60
+    mgr->SetBaseSnapshot(MakeMockSnapshot(0));
+    const auto sinkState0 = sink.SaveState();
+
+    while (session->mGameTick < 15) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    const auto sinkState15 = sink.SaveState();
+    mgr->AddSnapshot(MakeMockSnapshot(15));
+
+    while (session->mGameTick < 30) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    const auto sinkState30 = sink.SaveState();
+    const gpg::MD5Digest goldenDigest30 = sink.ComputeStateDigest();
+    mgr->AddSnapshot(MakeMockSnapshot(30));
+
+    while (session->mGameTick < 45) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    const auto sinkState45 = sink.SaveState();
+    mgr->AddSnapshot(MakeMockSnapshot(45));
+
+    while (session->mGameTick < 60) {
+      DispatchFrame(session, decoder, beats, 0.05f);
+    }
+    const auto sinkState60 = sink.SaveState();
+    mgr->AddSnapshot(MakeMockSnapshot(60));
+
+    // Scrub back and forth:
+    // 1. Scrub backward from 60 to 20: nearest snap is 15
+    session->StartScrubToBeat(20);
+    CHECK(session->mGameTick == 15);
+    sink.RestoreState(sinkState15);
+    DispatchFrame(session, decoder, beats, 0.05f);
+    CHECK(session->mGameTick == 20);
+
+    // 2. Scrub forward from 20 to 50
+    session->StartScrubToBeat(50);
+    DispatchFrame(session, decoder, beats, 0.05f);
+    CHECK(session->mGameTick == 50);
+
+    // 3. Scrub backward from 50 to 30: exact snapshot at 30
+    session->StartScrubToBeat(30);
+    CHECK(session->mGameTick == 30);
+    CHECK(session->IsScrubbing() == false);
+    sink.RestoreState(sinkState30);
+
+    const gpg::MD5Digest finalDigest30 = sink.ComputeStateDigest();
+    CHECK(AreDigestsEqual(finalDigest30, goldenDigest30));
+
+    moho::CWldSession::ResetSnapshotManager();
+  }
+
   void TestReplayScrubbingBackwardSeek()
   {
     constexpr int kTotalBeats = 100;
@@ -1260,11 +1519,16 @@ namespace
     {"replay scrubbing checksum parity", &TestReplayScrubbingChecksumParity},
     {"replay scrubbing cancellation", &TestReplayScrubbingCancellation},
     {"replay scrubbing backward seek", &TestReplayScrubbingBackwardSeek},
+    {"replay scrubbing forward and backward parity", &TestReplayScrubbingForwardAndBackwardParity},
+    {"replay scrubbing to base beat 0", &TestReplayScrubbingToBaseBeat0},
+    {"replay rapid bidirectional scrubbing", &TestReplayRapidBidirectionalScrubbing},
   };
 } // namespace
 
 int main()
 {
+  std::setvbuf(stdout, nullptr, _IONBF, 0);
+  std::setvbuf(stderr, nullptr, _IONBF, 0);
   for (const TestCase& test : kTests) {
     const int failuresBefore = gFailures;
     test.func();
@@ -1273,7 +1537,9 @@ int main()
     } else {
       std::printf("FAIL %s\n", test.name);
     }
+    std::fflush(stdout);
   }
   std::printf("%d checks, %d failures\n", gChecks, gFailures);
+  std::fflush(stdout);
   return gFailures;
 }

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <cstddef>
 #include <cstdint>
 
@@ -58,6 +58,7 @@ namespace moho
   class EntityCategoryLookupResolver;
   class LaunchInfoBase;
   class RRuleGameRules;
+  class ReplaySnapshotManager;
   class RRuleGameRulesImpl;
   class UserEntity;
   class CameraImpl;
@@ -626,6 +627,13 @@ namespace moho
 
     /// Static target for backward scrub across session restarts
     static std::int32_t sPendingRestartScrubTarget;
+
+    /**
+     * Engine addition: Expose snapshot manager for testing and session management.
+     */
+    static ReplaySnapshotManager* GetSnapshotManager();
+    static void InitSnapshotManager(std::size_t maxSnapshots = 8);
+    static void ResetSnapshotManager();
 
     /**
      * Engine addition: Initiates fast-forward / scrubbing to `targetBeat`.

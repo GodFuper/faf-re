@@ -9027,6 +9027,21 @@ namespace moho
     }
   }
 
+  ReplaySnapshotManager* CWldSession::GetSnapshotManager()
+  {
+    return sSnapshotManager.get();
+  }
+
+  void CWldSession::InitSnapshotManager(const std::size_t maxSnapshots)
+  {
+    sSnapshotManager = std::make_unique<ReplaySnapshotManager>(maxSnapshots);
+  }
+
+  void CWldSession::ResetSnapshotManager()
+  {
+    sSnapshotManager.reset();
+  }
+
   void CWldSession::StartScrubToBeat(const std::int32_t targetBeat)
   {
     if (!IsReplay) {
@@ -9081,7 +9096,9 @@ namespace moho
 
       mGameTick = snap->beat;
       mTimeSinceLastTick = 0.0f;
-      SetSelectionUnits({});
+      if (simDriver != nullptr) {
+        SetSelectionUnits({});
+      }
 
       if (clampedTarget == snap->beat) {
         mIsScrubbing = false;
