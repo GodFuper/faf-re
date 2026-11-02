@@ -2178,8 +2178,8 @@ namespace moho
     auto* const self = const_cast<CFormationInstance*>(this);
     const gpg::RRef ownerRef{};
 
-    if (gpg::RType* const baseType = CachedCFormationInstanceType(); baseType != nullptr) {
-      archive->Write(baseType, self, ownerRef);
+    if (gpg::RType* const baseType = CachedIFormationInstanceType(); baseType != nullptr) {
+      archive->Write(baseType, static_cast<IFormationInstance*>(self), ownerRef);
     }
 
     gpg::RRef pointerRef{};
@@ -2223,8 +2223,8 @@ namespace moho
 
     const gpg::RRef ownerRef{};
 
-    if (gpg::RType* const baseType = CachedCFormationInstanceType(); baseType != nullptr) {
-      archive->Read(baseType, this, ownerRef);
+    if (gpg::RType* const baseType = CachedIFormationInstanceType(); baseType != nullptr) {
+      archive->Read(baseType, static_cast<IFormationInstance*>(this), ownerRef);
     }
 
     (void)archive->ReadPointer(&mState, &ownerRef);
