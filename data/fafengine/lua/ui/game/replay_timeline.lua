@@ -99,8 +99,15 @@ local function IsScrubbing()
 end
 
 local function DoScrub(targetTick)
-    if is_callable(ScrubReplay) then
-        pcall(ScrubReplay, targetTick)
+    local fn = rawget(_G, 'ScrubReplay')
+    if not fn and is_callable(ScrubReplay) then
+        fn = ScrubReplay
+    end
+    if is_callable(fn) then
+        LOG(string.format("FAFENGINE: Calling ScrubReplay(%d)", targetTick))
+        pcall(fn, targetTick)
+    else
+        WARN("FAFENGINE: ScrubReplay not callable!")
     end
 end
 
@@ -457,12 +464,13 @@ function CreateReplayTimeline(parent)
 
         -- If rewinding backward, clear unit selection to prevent invalid entity references in UI
         if targetTick < curTick then
-            local ok, sel = pcall(import, '/lua/ui/game/selection.lua')
-            if ok and sel and is_callable(sel.ClearSelection) then
-                pcall(sel.ClearSelection)
+            local su = rawget(_G, 'SelectUnits')
+            if is_callable(su) then
+                pcall(su, nil)
             end
         end
 
+        LOG(string.format("FAFENGINE: Timeline seeking replay from tick %d to tick %d", curTick, targetTick))
         DoScrub(targetTick)
         if controls.overlay then
             controls.overlay:ShowOverlay(targetTick)

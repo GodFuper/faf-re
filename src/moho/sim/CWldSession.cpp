@@ -9017,11 +9017,13 @@ namespace moho
       sim->SaveState(writeArchive.get());
       std::fflush(snapshot.file.get());
 
+      const std::uint64_t offset = snapshot.streamOffset;
       if (isBase) {
         sSnapshotManager->SetBaseSnapshot(std::move(snapshot));
       } else {
         sSnapshotManager->AddSnapshot(std::move(snapshot));
       }
+      gpg::Logf("ReplaySnapshot captured at beat %d (isBase=%d, streamOffset=%llu)", beat, isBase ? 1 : 0, offset);
     } catch (const std::exception& e) {
       gpg::Warnf("Failed to capture replay snapshot at beat %d: %s", beat, e.what());
     }
@@ -9053,17 +9055,26 @@ namespace moho
       clampedTarget = mTotalReplayBeats;
     }
 
+    gpg::Logf("CWldSession::StartScrubToBeat: targetBeat=%d clampedTarget=%d mGameTick=%d", targetBeat, clampedTarget, mGameTick);
+
     if (clampedTarget <= mGameTick) {
       if (sSnapshotManager == nullptr) {
+        gpg::Warnf("CWldSession::StartScrubToBeat: rewind failed, sSnapshotManager is null!");
         CancelScrub();
         return;
       }
 
       const ReplaySnapshot* const snap = sSnapshotManager->FindNearestSnapshot(clampedTarget);
       if (snap == nullptr || !snap->file) {
+        gpg::Warnf("CWldSession::StartScrubToBeat: rewind failed, no snapshot found <= %d", clampedTarget);
         CancelScrub();
         return;
       }
+
+      gpg::Logf(
+        "CWldSession::StartScrubToBeat: rewinding from tick %d to snapshot tick %d (target %d, offset %llu)",
+        mGameTick, snap->beat, clampedTarget, snap->streamOffset
+      );
 
       mIsScrubbing = true;
       mScrubStartBeat = snap->beat;
@@ -9251,11 +9262,19 @@ namespace moho
       mTimeSinceLastTick = 0.0f;
     }
 
-    if (IsReplay && !mIsScrubbing && sSnapshotManager != nullptr) {
+    if (IsReplay && !mIsScrubbing) {
+      if (sSnapshotManager == nullptr) {
+        sSnapshotManager = std::make_unique<ReplaySnapshotManager>(
+          sim_ReplaySnapshotMax > 0 ? static_cast<std::size_t>(sim_ReplaySnapshotMax) : 8
+        );
+      }
+      static std::int32_t sLastSnapshotBeat = -1;
       if (sSnapshotManager->GetBaseSnapshot() == nullptr) {
         CaptureReplaySnapshot(this, mGameTick, /*isBase=*/true);
-      } else if (sim_ReplaySnapshotInterval > 0 && mGameTick > 0 && (mGameTick % sim_ReplaySnapshotInterval == 0)) {
+        sLastSnapshotBeat = mGameTick;
+      } else if (sim_ReplaySnapshotInterval > 0 && (mGameTick - sLastSnapshotBeat >= sim_ReplaySnapshotInterval)) {
         CaptureReplaySnapshot(this, mGameTick, /*isBase=*/false);
+        sLastSnapshotBeat = mGameTick;
       }
     }
 
