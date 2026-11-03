@@ -3862,7 +3862,7 @@ extern "C"
 		int narray = 0;
 		int nhash = 0;
 		numuse(table, &narray, &nhash);
-		const int hashBits = luaO_log2(static_cast<unsigned int>(nhash)) + 1;
+		const int hashBits = luaO_log2(static_cast<unsigned int>(nhash + 1)) + 1;
 		return resize(table, narray, state, hashBits);
 	}
 
@@ -3876,6 +3876,13 @@ extern "C"
 	 */
 	TObject* newkey(lua_State* const state, Table* const table, const TObject* const key)
 	{
+		const Node* const dummynode = state->l_G->dummynode;
+		if (table->node == dummynode || table->firstfree == nullptr || table->firstfree < table->node ||
+			(table->firstfree == table->node && table->firstfree->i_key.tt != LUA_TNIL)) {
+			(void)RehashTableFromUsage(table, state);
+			return luaH_set(state, table, key);
+		}
+
 		Node* mainPosition = luaH_mainposition(table, key);
 		if (mainPosition->i_val.tt != LUA_TNIL) {
 			Node* const collidingMainPosition = luaH_mainposition(table, &mainPosition->i_key);
@@ -3886,59 +3893,27 @@ extern "C"
 				mainPosition = firstFree;
 			} else {
 				Node* collisionPrev = collidingMainPosition;
-				while (collisionPrev->next != mainPosition) {
+				while (collisionPrev != nullptr && collisionPrev->next != mainPosition) {
 					collisionPrev = collisionPrev->next;
 				}
 
-				collisionPrev->next = firstFree;
-				firstFree->i_key = mainPosition->i_key;
-				firstFree->i_val = mainPosition->i_val;
-				firstFree->next = mainPosition->next;
+				if (collisionPrev != nullptr) {
+					collisionPrev->next = firstFree;
+				}
+				*firstFree = *mainPosition;
 				mainPosition->next = nullptr;
 				mainPosition->i_val.tt = LUA_TNIL;
 			}
 		}
 
 		mainPosition->i_key = *key;
-		if (table->firstfree->i_key.tt == LUA_TNIL) {
-			return &mainPosition->i_val;
-		}
 
 		const Node* const nodeStart = table->node;
-		for (;;) {
-			Node* const currentFirstFree = table->firstfree;
-			if (currentFirstFree == nodeStart) {
-				break;
-			}
-
-			Node* const previousNode = currentFirstFree - 1;
-			table->firstfree = previousNode;
-			if (previousNode->i_key.tt == LUA_TNIL) {
-				return &mainPosition->i_val;
-			}
+		while (table->firstfree > nodeStart && table->firstfree->i_key.tt != LUA_TNIL) {
+			--table->firstfree;
 		}
 
-		mainPosition->i_val.tt = LUA_TBOOLEAN;
-		mainPosition->i_val.value.b = 0;
-		(void)RehashTableFromUsage(table, state);
-
-		TObject* valueSlot = nullptr;
-		if (key->tt == LUA_TNUMBER) {
-			const float numericKey = key->value.n;
-			const int integerKey = msvc8::TruncateToInt(numericKey); // the binary's cvttss2si
-			if (static_cast<float>(integerKey) == numericKey) {
-				valueSlot = const_cast<TObject*>(luaH_getnum(table, integerKey));
-			}
-		} else if (key->tt == LUA_TSTRING) {
-			valueSlot = const_cast<TObject*>(luaH_getstr(table, static_cast<TString*>(key->value.p)));
-		}
-
-		if (valueSlot == nullptr) {
-			valueSlot = const_cast<TObject*>(luaH_getany(key, table));
-		}
-
-		valueSlot->tt = LUA_TNIL;
-		return valueSlot;
+		return &mainPosition->i_val;
 	}
 
 	/**
@@ -7530,51 +7505,43 @@ namespace
 	 */
 	extern "C" void traverseproto(GCState* const st, Proto* const f)
 	{
-		f->source->marked |= 1u;
+		if (f->source != nullptr) {
+			f->source->marked |= 1u;
+		}
 		for (int index = 0; index < f->sizek; ++index) {
 			TObject& constant = f->k[index];
-			if (constant.tt == LUA_TSTRING) {
+			if (constant.tt == LUA_TSTRING && constant.value.p != nullptr) {
 				static_cast<TString*>(constant.value.p)->marked |= 1u;
 			}
 		}
 
 		for (int index = 0; index < f->sizeupvalues; ++index) {
-			f->upvalues[index]->marked |= 1u;
+			if (f->upvalues != nullptr && f->upvalues[index] != nullptr) {
+				f->upvalues[index]->marked |= 1u;
+			}
 		}
 
 		for (int index = 0; index < f->sizep; ++index) {
-			Proto* const nested = f->p[index];
-			if ((nested->marked & 0x11u) == 0u) {
-				reallymarkobject(st, reinterpret_cast<GCObject*>(nested));
+			if (f->p != nullptr && f->p[index] != nullptr) {
+				Proto* const nested = f->p[index];
+				if ((nested->marked & 0x11u) == 0u) {
+					reallymarkobject(st, reinterpret_cast<GCObject*>(nested));
+				}
 			}
 		}
 
 		for (int index = 0; index < f->sizelocvars; ++index) {
-			TString* const varname = f->locvars[index].varname;
-			const auto nameBits = reinterpret_cast<std::uintptr_t>(varname);
-			if (nameBits < 0x00100000u || (nameBits & 3u) != 0u) {
-				static int sBadNameBudget = 0;
-				if (sBadNameBudget < 10) {
-					++sBadNameBudget;
-					char probe[512];
-					sprintf_s(probe, sizeof(probe),
-					          "[LOCVARBAD] proto=%p locvars=%p(%d) idx=%d varname=%p | code=%p(%d end=%p) k=%p(%d) p=%p(%d) lineinfo=%p(%d)\n",
-					          static_cast<const void*>(f),
-					          static_cast<const void*>(f->locvars),
-					          f->sizelocvars, index, static_cast<const void*>(varname),
-					          static_cast<const void*>(f->code),
-					          f->sizecode,
-					          reinterpret_cast<const void*>(reinterpret_cast<std::uintptr_t>(f->code) +
-					                                sizeof(Instruction) * static_cast<std::size_t>(f->sizecode)),
-					          static_cast<const void*>(f->k), f->sizek,
-					          static_cast<const void*>(f->p), f->sizep,
-					          static_cast<const void*>(f->lineinfo),
-					          f->sizelineinfo);
-					::OutputDebugStringA(probe);
+			if (f->locvars != nullptr) {
+				TString* const varname = f->locvars[index].varname;
+				if (varname != nullptr) {
+					const auto nameBits = reinterpret_cast<std::uintptr_t>(varname);
+					if (nameBits >= 0x00100000u && (nameBits & 3u) == 0u) {
+						if (varname->tt == LUA_TSTRING) {
+							varname->marked |= 1u;
+						}
+					}
 				}
-				continue;
 			}
-			varname->marked |= 1u;
 		}
 	}
 
@@ -19072,6 +19039,7 @@ extern "C"
 		}
 	}
 
+
 	/**
 	 * Address: 0x00924470 (FUN_00924470, f_luaopen)
 	 *
@@ -20011,6 +19979,18 @@ void LuaState::SetState(lua_State* const state)
 	m_state->stateUserData = this;
 }
 
+void EnumerateLuaCClosures(lua_State* const mainState, std::function<void(CClosure*)> visitor)
+{
+	if (!mainState || !mainState->l_G) {
+		return;
+	}
+	for (GCObject* obj = mainState->l_G->rootgc; obj != nullptr; obj = obj->gch.next) {
+		if (obj->gch.tt == LUA_CFUNCTION) {
+			visitor(&obj->cl.c);
+		}
+	}
+}
+
 /**
  * Address: 0x00921480 (FUN_00921480, func_SerializeNameLuaObject)
  *
@@ -20025,6 +20005,7 @@ void LuaState::SetState(lua_State* const state)
 	TString* const serializeMapName = luaS_newlstr(state, "__serialize_name_for_object", 0x1Bu);
 	const TObject* const serializeMapObject = luaH_getstr(static_cast<Table*>(state->_gt.value.p), serializeMapName);
 	if (serializeMapObject->tt != LUA_TTABLE) {
+		std::printf("  [Resolve] serializeMapObject->tt = %d (not table %d)\n", serializeMapObject->tt, LUA_TTABLE);
 		return nullptr;
 	}
 
@@ -20264,13 +20245,14 @@ void Proto::MemberSerialize(gpg::WriteArchive* const archive, const int, const g
 	}
 
 	for (int index = 0; index < sizelocvars; ++index) {
-		archive->WritePointer<TString>(locvars[index].varname, gpg::TrackedPointerState::Unowned, ownerRef);
-		archive->WriteInt(locvars[index].startpc);
-		archive->WriteInt(locvars[index].endpc);
+		archive->WritePointer<TString>(locvars ? locvars[index].varname : nullptr, gpg::TrackedPointerState::Unowned, ownerRef);
+		archive->WriteInt(locvars ? locvars[index].startpc : 0);
+		archive->WriteInt(locvars ? locvars[index].endpc : 0);
 	}
 
 	for (int index = 0; index < nups; ++index) {
-		archive->WritePointer<TString>(upvalues[index], gpg::TrackedPointerState::Unowned, ownerRef);
+		TString* const uv = (upvalues != nullptr && index < sizeupvalues) ? upvalues[index] : nullptr;
+		archive->WritePointer<TString>(uv, gpg::TrackedPointerState::Unowned, ownerRef);
 	}
 
 	archive->WritePointer<TString>(source, gpg::TrackedPointerState::Unowned, ownerRef);
@@ -20305,37 +20287,68 @@ void Proto::MemberDeserialize(gpg::ReadArchive* const archive, const int, const 
 	const gpg::RRef& owner = ownerRef;
 	gpg::RType* const tObjectType = CachedType<TObject>(gLuaTObjectType);
 
-	k = luaM_newvector<TObject>(ownerState, static_cast<lu_mem>(sizek));
-	for (int index = 0; index < sizek; ++index) {
-		archive->Read(tObjectType, &k[index], owner);
+	if (sizek > 0) {
+		k = luaM_newvector<TObject>(ownerState, static_cast<lu_mem>(sizek));
+		for (int index = 0; index < sizek; ++index) {
+			archive->Read(tObjectType, &k[index], owner);
+		}
+	} else {
+		k = nullptr;
+		sizek = 0;
 	}
 
-	code = luaM_newvector<Instruction>(ownerState, static_cast<lu_mem>(sizecode));
-	archive->ReadBytes(
-		reinterpret_cast<char*>(code),
-		sizeof(Instruction) * static_cast<std::size_t>(sizecode)
-	);
-
-	p = luaM_newvector<Proto*>(ownerState, static_cast<lu_mem>(sizep));
-	for (int index = 0; index < sizep; ++index) {
-		archive->ReadPointer(&p[index], &ownerRef);
+	if (sizecode > 0) {
+		code = luaM_newvector<Instruction>(ownerState, static_cast<lu_mem>(sizecode));
+		archive->ReadBytes(
+			reinterpret_cast<char*>(code),
+			sizeof(Instruction) * static_cast<std::size_t>(sizecode)
+		);
+	} else {
+		code = nullptr;
+		sizecode = 0;
 	}
 
-	lineinfo = luaM_newvector<int>(ownerState, static_cast<lu_mem>(sizelineinfo));
-	for (int index = 0; index < sizelineinfo; ++index) {
-		archive->ReadInt(&lineinfo[index]);
+	if (sizep > 0) {
+		p = luaM_newvector<Proto*>(ownerState, static_cast<lu_mem>(sizep));
+		for (int index = 0; index < sizep; ++index) {
+			archive->ReadPointer(&p[index], &ownerRef);
+		}
+	} else {
+		p = nullptr;
+		sizep = 0;
 	}
 
-	locvars = luaM_newvector<LocVar>(ownerState, static_cast<lu_mem>(sizelocvars));
-	for (int index = 0; index < sizelocvars; ++index) {
-		archive->ReadPointer(&locvars[index].varname, &ownerRef);
-		archive->ReadInt(&locvars[index].startpc);
-		archive->ReadInt(&locvars[index].endpc);
+	if (sizelineinfo > 0) {
+		lineinfo = luaM_newvector<int>(ownerState, static_cast<lu_mem>(sizelineinfo));
+		for (int index = 0; index < sizelineinfo; ++index) {
+			archive->ReadInt(&lineinfo[index]);
+		}
+	} else {
+		lineinfo = nullptr;
+		sizelineinfo = 0;
 	}
 
-	upvalues = luaM_newvector<TString*>(ownerState, static_cast<lu_mem>(nups));
-	for (int index = 0; index < nups; ++index) {
-		archive->ReadPointer(&upvalues[index], &ownerRef);
+	if (sizelocvars > 0) {
+		locvars = luaM_newvector<LocVar>(ownerState, static_cast<lu_mem>(sizelocvars));
+		for (int index = 0; index < sizelocvars; ++index) {
+			archive->ReadPointer(&locvars[index].varname, &ownerRef);
+			archive->ReadInt(&locvars[index].startpc);
+			archive->ReadInt(&locvars[index].endpc);
+		}
+	} else {
+		locvars = nullptr;
+		sizelocvars = 0;
+	}
+
+	if (nups > 0) {
+		upvalues = luaM_newvector<TString*>(ownerState, static_cast<lu_mem>(nups));
+		for (int index = 0; index < nups; ++index) {
+			archive->ReadPointer(&upvalues[index], &ownerRef);
+		}
+		sizeupvalues = nups;
+	} else {
+		upvalues = nullptr;
+		sizeupvalues = 0;
 	}
 
 	archive->ReadPointer(&source, &ownerRef);

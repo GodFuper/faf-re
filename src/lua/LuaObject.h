@@ -3,6 +3,7 @@
 #include <string>
 #include <concepts>
 #include <type_traits>
+#include <functional>
 #include "lua/LuaRuntimeTypes.h"
 
 extern "C"
@@ -846,6 +847,14 @@ namespace LuaPlus
 		 * and Lua closure tags via `(tt | 1) == LUA_TFUNCTION`.
 		 */
 		[[nodiscard]] bool IsFunction() const;
+
+		/**
+		 * Engine addition: returns whether this tagged Lua value is a C-function.
+		 */
+		[[nodiscard]] bool IsCFunction() const noexcept
+		{
+			return m_state != nullptr && m_object.tt == LUA_CFUNCTION;
+		}
 
 		/**
 		 * Address: 0x00907700 (FUN_00907700, LuaPlus::LuaObject::IsConvertibleToInteger)
@@ -3253,6 +3262,13 @@ extern "C" int LuaPlusH_next(
  */
 int LuaSerializeToString(lua_State* L);
 int LuaSerializeFromString(lua_State* L);
+
+/**
+ * Calls visitor(cclosure) for every CClosure reachable from the GC root list
+ * of the main Lua state's global_State. Safe to call only between ticks
+ * (GC traversal lock not held). Order matches rootgc link order.
+ */
+void EnumerateLuaCClosures(lua_State* mainState, std::function<void(CClosure*)> visitor);
 
 namespace moho
 {
