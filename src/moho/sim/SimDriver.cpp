@@ -1,4 +1,13 @@
 #include "SimDriver.h"
+#include "moho/entity/EntityDb.h"
+#include "moho/sim/WldSessionState.h"
+#include "moho/sim/WldSessionState.h"
+#include "moho/net/CReplayClient.h"
+#include "moho/sim/ReplaySnapshotManager.h"
+#include "gpg/core/containers/ReadArchive.h"
+#include "gpg/core/containers/WriteArchive.h"
+#include <condition_variable>
+#include <mutex>
 #include "gpg/core/profiling/Profiler.h"
 #include "platform/Interlocked.h"
 #include "moho/core/ThreadPlacement.h"
@@ -15,6 +24,7 @@
 #include <limits>
 #include <new>
 #include <vector>
+#include <filesystem>
 
 #include "boost/function.hpp"
 #include <boost/bind.hpp>
@@ -77,6 +87,20 @@ namespace
   // Engine addition: the sim's own speed estimate (game seconds per real second, from the median
   // beat time) before `RATE_GameRateToSpeed` rounds it down to a whole rate step.
   std::atomic<float> gLeadSimSpeedEstimate{0.0f};
+
+  struct PendingRewindRequest
+  {
+    std::mutex mutex;
+    std::condition_variable cv;
+    const moho::ReplaySnapshot* snapshot{nullptr};
+    bool completed{false};
+    bool success{false};
+  };
+
+  PendingRewindRequest gPendingRewindRequest;
+  std::atomic<std::int32_t> gLastSnapshotBeat{-1};
+  std::int32_t gLastPeriodicSnapshotBeat{0};
+  std::atomic<bool> gRewindInProgress{false};
 
   // Sim bootstrap, from CSimDriver::ThreadCreateSim (0x0073D260).
   constexpr std::uint32_t kSimThreadTimeBarColor = 0xFFFF0000u;
@@ -825,6 +849,148 @@ void CSimDriver::PreparePendingSaveRequestLocked(boost::mutex::scoped_lock& lock
  * Unlocks the driver mutex, runs one `Sim::Sync` publish pass, relocks,
  * verifies historical checksums when available, and enqueues the sync packet.
  */
+bool CSimDriver::RequestRewind(const ReplaySnapshot& snapshot)
+{
+  gpg::Logf("SimDriver: RequestRewind called for beat %d", snapshot.beat);
+  gRewindInProgress.store(true, std::memory_order_release);
+
+  boost::mutex::scoped_lock drvLock(mLock);
+  gpg::Logf("SimDriver: RequestRewind acquired mLock (mCreateSimThread=%p, mInterlockedMode=%d)",
+            mCreateSimThread, mInterlockedMode ? 1 : 0);
+
+  std::unique_lock<std::mutex> reqLock(gPendingRewindRequest.mutex);
+  gPendingRewindRequest.snapshot = &snapshot;
+  gPendingRewindRequest.completed = false;
+  gPendingRewindRequest.success = false;
+
+  if (mCreateSimThread == nullptr || mInterlockedMode) {
+    gpg::Logf("SimDriver: RequestRewind executing PreparePendingRewindRequestLocked inline");
+    PreparePendingRewindRequestLocked(drvLock);
+    return gPendingRewindRequest.success;
+  }
+
+  gpg::Logf("SimDriver: RequestRewind notifying mStateChanged and connection event");
+  mStateChanged.notify_all();
+  if (mConnectionEvent) {
+    SetEvent(mConnectionEvent);
+  }
+  drvLock.unlock();
+
+  gpg::Logf("SimDriver: RequestRewind waiting on cv...");
+  gPendingRewindRequest.cv.wait(reqLock, [] { return gPendingRewindRequest.completed; });
+  gpg::Logf("SimDriver: RequestRewind finished, success=%d", gPendingRewindRequest.success ? 1 : 0);
+  return gPendingRewindRequest.success;
+}
+
+void CSimDriver::WakeIssueThread()
+{
+  if (mConnectionEvent) {
+    SetEvent(mConnectionEvent);
+  }
+}
+
+void CSimDriver::PreparePendingRewindRequestLocked(boost::mutex::scoped_lock& lock)
+{
+  const ReplaySnapshot* const snap = gPendingRewindRequest.snapshot;
+  gpg::Logf("SimDriver: PreparePendingRewindRequestLocked entered (snap=%p)", snap);
+  if (snap == nullptr) {
+    gRewindInProgress.store(false, std::memory_order_release);
+    return;
+  }
+
+  gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: snapshot beat %d, offset %llu", snap->beat, snap->streamOffset);
+  bool success = false;
+  CReplayClient* replayClient = nullptr;
+  try {
+    gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: calling RewindBeatsLocked(%d)", snap->beat);
+    RewindBeatsLocked(snap->beat);
+    gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: RewindBeatsLocked done");
+    if (CClientManagerImpl* const clientMgr = mClientManager.get()) {
+      gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: calling clientMgr->RewindBeats(%d)", snap->beat);
+      clientMgr->RewindBeats(snap->beat);
+      if (!clientMgr->mClients.empty()) {
+        replayClient = dynamic_cast<CReplayClient*>(clientMgr->mClients[0]);
+        if (replayClient != nullptr) {
+          gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: calling replayClient->RewindStream(%llu, %d)",
+                    snap->streamOffset, snap->beat);
+          replayClient->RewindStream(snap->streamOffset, snap->beat);
+        }
+      }
+    }
+
+    if (mSim && snap->file) {
+      gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: seeking file to offset %llu and creating ReadArchive...",
+                static_cast<unsigned long long>(snap->filePayloadOffset));
+      std::fseek(snap->file.get(), static_cast<long>(snap->filePayloadOffset), SEEK_SET);
+      std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(snap->file));
+      gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: calling mSim->RestoreState...");
+      mSim->RestoreState(readArchive.get(), snap->beat);
+      gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: mSim->RestoreState returned!");
+
+      // Verification step: verify restored Sim integrity before resuming
+      const std::uint32_t expectedBeat = static_cast<std::uint32_t>(snap->beat) + 1;
+      const bool beatMatches = (mSim->mCurBeat == expectedBeat);
+      const bool entityDbValid = (mSim->mEntityDB != nullptr);
+      const bool armiesValid = (!mSim->mArmiesList.empty());
+      const std::size_t unitCount = entityDbValid ? mSim->mEntityDB->mAllUnits.size() : 0;
+
+      if (!beatMatches || !entityDbValid || !armiesValid) {
+        gpg::Warnf("SimDriver: PreparePendingRewindRequestLocked verification FAILED! expectedBeat=%u, curBeat=%u, entityDb=%p, armies=%zu",
+                   expectedBeat, mSim->mCurBeat, mSim->mEntityDB, mSim->mArmiesList.size());
+        success = false;
+      } else {
+        gpg::Logf("SimDriver: PreparePendingRewindRequestLocked verified OK (curBeat=%u, armies=%zu, unitCount=%zu)",
+                  mSim->mCurBeat, mSim->mArmiesList.size(), unitCount);
+        std::memcpy(mSim->mSimHashes, snap->simHashes, sizeof(mSim->mSimHashes));
+        mSim->mContext = snap->md5Context;
+        mSim->mDesyncs.clear();
+        mSim->mIsDesyncFree = true;
+        if (!mSim->mLogFilePrefix.empty()) {
+          if (mSim->mLog) {
+            std::fclose(mSim->mLog);
+            mSim->mLog = nullptr;
+          }
+          mSim->mDesyncLogLine = gpg::STR_Printf("%sbeat%05d.log", mSim->mLogFilePrefix.c_str(), static_cast<int>(mSim->mCurBeat));
+          fopen_s(&mSim->mLog, mSim->mDesyncLogLine.c_str(), "w");
+        }
+        gpg::Logf("SimDriver: Restored all 128 periodic checksums and MD5Context from snapshot");
+        gLastSnapshotBeat.store(snap->beat, std::memory_order_relaxed);
+        gLastPeriodicSnapshotBeat = snap->beat;
+        success = true;
+      }
+    } else {
+      gpg::Warnf("SimDriver: PreparePendingRewindRequestLocked: mSim=%p, snap->file=%p", mSim.get(), snap->file ? snap->file.get() : nullptr);
+    }
+  } catch (const std::exception& ex) {
+    gpg::Warnf("PreparePendingRewindRequestLocked failed: %s", ex.what());
+    success = false;
+  } catch (...) {
+    gpg::Warnf("PreparePendingRewindRequestLocked failed with unknown exception");
+    success = false;
+  }
+
+  // Resume replay stream and unpause
+  if (success && replayClient) {
+    gpg::Logf("SimDriver: Resuming replay client stream for beat %d...", snap->beat + 1);
+    replayClient->Start();
+  }
+  gRewindInProgress.store(false, std::memory_order_release);
+
+  {
+    std::lock_guard<std::mutex> reqLock(gPendingRewindRequest.mutex);
+    gPendingRewindRequest.snapshot = nullptr;
+    gPendingRewindRequest.completed = true;
+    gPendingRewindRequest.success = success;
+    gPendingRewindRequest.cv.notify_all();
+  }
+
+  mStateChanged.notify_all();
+  if (mConnectionEvent) {
+    SetEvent(mConnectionEvent);
+  }
+  gpg::Logf("SimDriver: PreparePendingRewindRequestLocked: complete");
+}
+
 void CSimDriver::RewindBeats(const int32_t beat)
 {
   boost::mutex::scoped_lock lock(mLock);
@@ -922,6 +1088,100 @@ void CSimDriver::ExecuteDispatchStepLocked(boost::mutex::scoped_lock& lock)
     FinalizeSyncDispatchLocked(lock);
   }
   FAF_PROFILE_FRAME("Sim Beat");
+
+  // Replay snapshotting on the Sim thread
+  if (ReplaySnapshotManager* const snapshotMgr = SessionGetSnapshotManager()) {
+    if (CClientManagerImpl* const clientMgr = mClientManager.get()) {
+      if (!clientMgr->mClients.empty()) {
+        if (CReplayClient* const replayClient = dynamic_cast<CReplayClient*>(clientMgr->mClients[0])) {
+          const int32_t beat = beatToDispatch;
+          const bool needBase = (!snapshotMgr->HasBaseSnapshot() && beat >= 1);
+          const bool needPeriodic = (sim_ReplaySnapshotInterval > 0 &&
+                                     (beat - gLastPeriodicSnapshotBeat >= sim_ReplaySnapshotInterval));
+
+          if (needBase || needPeriodic) {
+            std::FILE* rawFile = nullptr;
+            if (tmpfile_s(&rawFile) == 0 && rawFile != nullptr) {
+              setvbuf(rawFile, nullptr, _IOFBF, 256 * 1024);
+              ReplaySnapshot snapshot;
+              snapshot.beat = beat;
+              snapshot.lastPeriodicBeat = gLastPeriodicSnapshotBeat;
+              snapshot.streamOffset = replayClient->GetBeatStreamPosition(beat + 1);
+              if (snapshot.streamOffset == 0) {
+                snapshot.streamOffset = replayClient->GetStreamPosition();
+              }
+              snapshot.simHash = mSim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+              std::memcpy(snapshot.simHashes, mSim->mSimHashes, sizeof(snapshot.simHashes));
+              snapshot.md5Context = mSim->mContext;
+              snapshot.file.reset(rawFile, SFileStarCloser{});
+
+              try {
+                gpg::Logf("ReplaySnapshot: starting SaveState for beat %d (lastPeriodicBeat=%d, isBase=%d)...",
+                          beat, snapshot.lastPeriodicBeat, needBase ? 1 : 0);
+                std::unique_ptr<gpg::WriteArchive> writeArchive(gpg::CreateBinaryWriteArchive(snapshot.file));
+                mSim->SaveState(writeArchive.get());
+                std::fflush(snapshot.file.get());
+                gpg::Logf("ReplaySnapshot: finished SaveState for beat %d", beat);
+                if (sim_DumpSnapshots != 0) {
+                  std::error_code ec;
+                  std::filesystem::create_directories("C:/ProgramData/FAForever/snapshots", ec);
+                  std::filesystem::create_directories("snapshots", ec);
+                  const char* const targetDirs[] = {
+                    "C:/ProgramData/FAForever/snapshots",
+                    "snapshots"
+                  };
+
+                  std::fseek(snapshot.file.get(), 0, SEEK_END);
+                  const long archiveSize = std::ftell(snapshot.file.get());
+                  std::fseek(snapshot.file.get(), 0, SEEK_SET);
+
+                  SReplaySnapshotFileHeader hdr{};
+                  hdr.beat = snapshot.beat;
+                  hdr.streamOffset = snapshot.streamOffset;
+                  hdr.lastPeriodicBeat = snapshot.lastPeriodicBeat;
+                  hdr.simHash = snapshot.simHash;
+                  std::memcpy(hdr.simHashes, snapshot.simHashes, sizeof(hdr.simHashes));
+                  hdr.md5Context = snapshot.md5Context;
+                  hdr.archivePayloadOffset = sizeof(SReplaySnapshotFileHeader);
+                  hdr.archivePayloadSize = (archiveSize > 0) ? static_cast<std::uint64_t>(archiveSize) : 0;
+
+                  for (const char* dir : targetDirs) {
+                    char dumpPath[260];
+                    std::snprintf(dumpPath, sizeof(dumpPath), "%s/replay_beat_%d.snap", dir, beat);
+                    if (std::FILE* const dumpFile = std::fopen(dumpPath, "wb")) {
+                      std::fwrite(&hdr, 1, sizeof(hdr), dumpFile);
+                      std::fseek(snapshot.file.get(), 0, SEEK_SET);
+                      char buf[65536];
+                      std::size_t n = 0;
+                      while ((n = std::fread(buf, 1, sizeof(buf), snapshot.file.get())) > 0) {
+                        std::fwrite(buf, 1, n, dumpFile);
+                      }
+                      std::fclose(dumpFile);
+                      std::fseek(snapshot.file.get(), 0, SEEK_SET);
+                      gpg::Logf("ReplaySnapshot: dumped snapshot with header to %s (payloadSize=%llu)",
+                                dumpPath, static_cast<unsigned long long>(hdr.archivePayloadSize));
+                    }
+                  }
+                }
+                const std::uint64_t offset = snapshot.streamOffset;
+
+                if (needBase) {
+                  snapshotMgr->SetBaseSnapshot(std::move(snapshot));
+                } else {
+                  snapshotMgr->AddSnapshot(std::move(snapshot));
+                }
+                gLastPeriodicSnapshotBeat = beat;
+                gLastSnapshotBeat.store(beat, std::memory_order_relaxed);
+                gpg::Logf("ReplaySnapshot captured at beat %d (isBase=%d, streamOffset=%llu)", beat, needBase ? 1 : 0, offset);
+              } catch (const std::exception& e) {
+                gpg::Warnf("Failed to capture replay snapshot at beat %d (will retry next beat): %s", beat, e.what());
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   if (mSimBusy) {
     return;
@@ -1176,6 +1436,20 @@ void CSimDriver::ThreadCreateSim()
       continue;
     }
 
+    bool hasRewind = false;
+    {
+      std::lock_guard<std::mutex> reqLock(gPendingRewindRequest.mutex);
+      hasRewind = (gPendingRewindRequest.snapshot != nullptr && !gPendingRewindRequest.completed);
+    }
+    if (hasRewind) {
+      gpg::Logf("SimDriver: ThreadCreateSim detected hasRewind=true, calling PreparePendingRewindRequestLocked");
+      PreparePendingRewindRequestLocked(lock);
+      gpg::Logf("SimDriver: ThreadCreateSim returned from PreparePendingRewindRequestLocked");
+      SetStateAndNotify(EDriverState::Ready);
+      PromoteToDispatchingWhenBeatAvailable(0);
+      continue;
+    }
+
     if (mSaveGameRequest != nullptr && !mWantsToSave
         && (mState == EDriverState::Dispatching || mState == EDriverState::Ready)) {
       PreparePendingSaveRequestLocked(lock);
@@ -1243,6 +1517,11 @@ void CSimDriver::ThreadRun()
   }
 
   while (!mStopSimThread) {
+    if (gRewindInProgress.load(std::memory_order_acquire)) {
+      mStateChanged.wait(lock);
+      continue;
+    }
+
     mClientManager->DoBeat();
 
     int waitMilliseconds = kIssueThreadIdleWaitMs;
@@ -1274,6 +1553,14 @@ void CSimDriver::ThreadRun()
           }
         } else {
           lastBeatToIssue = std::min(partiallyQueuedBeat, beatCeiling);
+        }
+      } else if (SessionIsScrubbing()) {
+        // Engine addition: Fast-forward replay scrubbing runs issue thread at maximum unthrottled throughput
+        if (mNextIssueBeat <= beatCeiling) {
+          lastBeatToIssue = beatCeiling;
+          waitMilliseconds = 0;
+        } else {
+          waitMilliseconds = kIssueThreadIdleWaitMs;
         }
       } else if (const int leadBeats = SessionLeadBeats(); leadBeats > 0 && sim_LeadOnSchedule == 0) {
         // Engine addition (sim_ReplayLead / sim_LocalLead): outside network sessions, keep
@@ -1377,6 +1664,10 @@ void CSimDriver::ThreadRun()
         );
       }
       lock.lock();
+    } else {
+      lock.unlock();
+      SwitchToThread();
+      lock.lock();
     }
   }
 
@@ -1426,6 +1717,16 @@ void CSimDriver::Dispatch()
   while (mInterlockedMode) {
     if (!mSyncDataQueue.Empty()) {
       break;
+    }
+
+    bool hasRewind = false;
+    {
+      std::lock_guard<std::mutex> reqLock(gPendingRewindRequest.mutex);
+      hasRewind = (gPendingRewindRequest.snapshot != nullptr && !gPendingRewindRequest.completed);
+    }
+    if (hasRewind) {
+      PreparePendingRewindRequestLocked(lock);
+      continue;
     }
 
     if (mSaveGameRequest && !mWantsToSave && (mState == EDriverState::Dispatching || mState == EDriverState::Ready)) {

@@ -613,6 +613,80 @@ namespace
     CHECK(cclosureCount > 0);
   }
 
+  void TestReplaySnapshotSchedulingAndRetry()
+  {
+    std::printf("--- Running TestReplaySnapshotSchedulingAndRetry ---\n");
+    const std::int32_t interval = 300;
+    std::int32_t lastPeriodicBeat = 0;
+    bool hasBaseSnapshot = false;
+
+    auto shouldCaptureSnapshot = [&](std::int32_t beat) -> bool {
+      const bool needBase = (!hasBaseSnapshot && beat >= 1);
+      const bool needPeriodic = (interval > 0 && (beat - lastPeriodicBeat >= interval));
+      return needBase || needPeriodic;
+    };
+
+    // Beat 1: base snapshot
+    CHECK(shouldCaptureSnapshot(1) == true);
+    hasBaseSnapshot = true;
+
+    // Beats 2 to 299: no snapshot
+    CHECK(shouldCaptureSnapshot(2) == false);
+    CHECK(shouldCaptureSnapshot(299) == false);
+
+    // Beat 300: scheduled periodic snapshot
+    CHECK(shouldCaptureSnapshot(300) == true);
+
+    // Simulate transient failure at beat 300 (e.g. CanSnapshot returned false)
+    // lastPeriodicBeat is NOT updated on failure:
+    CHECK(lastPeriodicBeat == 0);
+
+    // Beat 301: should immediately retry because (301 - 0 >= 300)
+    CHECK(shouldCaptureSnapshot(301) == true);
+
+    // Simulate success at beat 301:
+    const std::int32_t recordedPreviousBeat = lastPeriodicBeat;
+    lastPeriodicBeat = 301;
+    CHECK(recordedPreviousBeat == 0);
+    CHECK(lastPeriodicBeat == 301);
+
+    // Beat 302: should NOT capture (302 - 301 < 300)
+    CHECK(shouldCaptureSnapshot(302) == false);
+
+    // Beat 600: (600 - 301 = 299 < 300) -> not yet
+    CHECK(shouldCaptureSnapshot(600) == false);
+
+    // Beat 601: (601 - 301 = 300 >= 300) -> next periodic snapshot triggers
+    CHECK(shouldCaptureSnapshot(601) == true);
+
+    // Verify SReplaySnapshotFileHeader holds lastPeriodicBeat
+    moho::ReplaySnapshot snap{};
+    snap.beat = 301;
+    snap.lastPeriodicBeat = recordedPreviousBeat;
+    snap.streamOffset = 12345;
+
+    std::FILE* rawFile = nullptr;
+    CHECK(tmpfile_s(&rawFile) == 0 && rawFile != nullptr);
+    boost::shared_ptr<std::FILE> file(rawFile, std::fclose);
+
+    moho::SReplaySnapshotFileHeader hdr{};
+    hdr.beat = snap.beat;
+    hdr.lastPeriodicBeat = snap.lastPeriodicBeat;
+    hdr.streamOffset = snap.streamOffset;
+    hdr.archivePayloadOffset = sizeof(moho::SReplaySnapshotFileHeader);
+    std::fwrite(&hdr, 1, sizeof(hdr), file.get());
+    std::fflush(file.get());
+
+    std::fseek(file.get(), 0, SEEK_SET);
+    moho::SReplaySnapshotFileHeader loadedHdr{};
+    CHECK(std::fread(&loadedHdr, 1, sizeof(loadedHdr), file.get()) == sizeof(loadedHdr));
+    CHECK(loadedHdr.beat == 301);
+    CHECK(loadedHdr.lastPeriodicBeat == 0);
+    CHECK(loadedHdr.streamOffset == 12345);
+
+    std::printf("  Replay snapshot retry and lastPeriodicBeat header verification passed!\n");
+  }
+
 } // namespace
 
 int main()
@@ -636,6 +710,7 @@ int main()
   TestEnumerateLuaCClosures();
   TestLuaCClosureArchiveTracking();
   TestCanSnapshotGuard();
+  TestReplaySnapshotSchedulingAndRetry();
 
   std::printf("\nResults: %d checks, %d failures\n", gChecks, gFailures);
   return gFailures == 0 ? 0 : 1;
