@@ -1,3 +1,4 @@
+#include "gpg/core/utils/Logging.h"
 #include "moho/command/SSTITarget.h"
 #include "moho/ai/CAiReconDBImplSerializer.h"
 
@@ -104,9 +105,13 @@ void SReconKey::MemberDeserialize(gpg::ReadArchive* const archive)
  */
 void SReconKey::MemberSerialize(gpg::WriteArchive* const archive) const
 {
+  gpg::Logf("SReconKey::MemberSerialize: sourceEntityId=%u ptr=%p", sourceEntityId, sourceEntity.GetObjectPtr());
   const gpg::RRef ownerRef{};
+  gpg::Logf("SReconKey::MemberSerialize: writing sourceEntity...");
   archive->Write(gpg::RTypeOf<WeakPtr<Entity>>(), &sourceEntity, ownerRef);
+  gpg::Logf("SReconKey::MemberSerialize: writing sourceEntityId...");
   archive->Write(gpg::RTypeOf<EntIdValue>(), &sourceEntityId, ownerRef);
+  gpg::Logf("SReconKey::MemberSerialize: done!");
 }
 
 /**
@@ -184,14 +189,23 @@ namespace moho
    */
   void CAiReconDBImpl::MemberSerialize(gpg::WriteArchive* const archive) const
   {
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: this=%p mArmy=%p blipMapSize=%u", this, mArmy, static_cast<unsigned>(mBlipMap.size()));
     const gpg::RRef ownerRef{};
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mBlipMap...");
     archive->Write(gpg::RTypeOf<ReconBlipMap>(), &mBlipMap, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mBblips...");
     archive->Write(gpg::RTypeOf<msvc8::vector<ReconBlip*>>(), &mBblips, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mTempBlips...");
     archive->Write(gpg::RTypeOf<msvc8::vector<ReconBlip*>>(), &mTempBlips, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mArmy...");
     archive->WritePointer(mArmy, gpg::TrackedPointerState::Unowned, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mMapData...");
     archive->WritePointer(mMapData, gpg::TrackedPointerState::Unowned, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mSim...");
     archive->WritePointer(mSim, gpg::TrackedPointerState::Unowned, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: mIMap...");
     archive->WritePointer(mIMap, gpg::TrackedPointerState::Unowned, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: grids...");
     archive->WritePointer(mVisionGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
     archive->WritePointer(mWaterGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
     archive->WritePointer(mRadarGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
@@ -200,8 +214,10 @@ namespace moho
     archive->WritePointer(mRCIGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
     archive->WritePointer(mSCIGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
     archive->WritePointer(mVCIGrid.px, gpg::TrackedPointerState::Shared, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: tail fields...");
     archive->WriteBool(mFogOfWar != 0u);
     archive->Write(gpg::RTypeOf<EntityCategorySet>(), &mVisibleToReconCategory, ownerRef);
+    gpg::Logf("CAiReconDBImpl::MemberSerialize: done!");
   }
 } // namespace moho
 

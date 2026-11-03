@@ -22,6 +22,7 @@
 #include "moho/sim/SPhysConstants.h"
 #include "gpg/core/utils/BoostWrappers.h"
 #include "gpg/core/utils/Global.h"
+#include "gpg/core/utils/Logging.h"
 #include "lua/LuaObject.h"
 #include "lua/LuaPrimitives.h"
 #include "moho/ai/EFormationdStatusTypeInfo.h"
@@ -666,11 +667,13 @@ namespace
 
   [[noreturn]] void ThrowSerializationError(const char* const message)
   {
+    gpg::Warnf("ThrowSerializationError: %s", message ? message : "");
     throw SerializationError(message ? message : "");
   }
 
   [[noreturn]] void ThrowSerializationError(const msvc8::string& message)
   {
+    gpg::Warnf("ThrowSerializationError: %s", message.c_str());
     throw SerializationError(message.c_str());
   }
 
@@ -922,6 +925,7 @@ void gpg::WriteRawPointer(
   } else {
     record = &found->second;
     if (record->ownership == TrackedPointerState::Reserved) {
+      gpg::Warnf("WriteRawPointer RECURSION ERROR! object=%p type=%s", objectRef.mObj, SafeTypeName(objectRef.mType));
       ThrowSerializationError(
         "Error while creating archive: recursively encountered a pointer to an object for which construction data is "
         "still being written"
@@ -934,6 +938,7 @@ void gpg::WriteRawPointer(
 
   if (state == TrackedPointerState::Owned) {
     if (record->ownership != TrackedPointerState::Unowned) {
+      gpg::Warnf("WriteRawPointer OWNERSHIP CONFLICT! object=%p type=%s currentOwnership=%d", objectRef.mObj, SafeTypeName(objectRef.mType), (int)record->ownership);
       ThrowSerializationError("Ownership conflict while writing archive.");
     }
     record->ownership = TrackedPointerState::Owned;

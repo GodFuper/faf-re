@@ -33,6 +33,11 @@ namespace moho
      * returns a typed reflection ref.
      */
     static gpg::RRef CtrRef(void* objectStorage);
+
+    /**
+     * Address: 0x005FD420 (FUN_005FD420, Moho::CFactoryBuildTaskTypeInfo::AddBase_CCommandTask)
+     */
+    static void __stdcall AddBase_CCommandTask(gpg::RType* typeInfo);
   };
 
   /**

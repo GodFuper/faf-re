@@ -398,12 +398,18 @@ namespace
 
   [[nodiscard]] std::uint32_t GetCoGridMapWidthMinusOne(const moho::Sim* const sim) noexcept
   {
+    if (sim == nullptr || sim->mMapData == nullptr || sim->mMapData->GetHeightField() == nullptr) {
+      return 0u;
+    }
     const moho::CHeightField* const field = sim->mMapData->GetHeightField();
     return static_cast<std::uint32_t>(field->width - 1);
   }
 
   [[nodiscard]] std::uint32_t GetCoGridMapHeightMinusOne(const moho::Sim* const sim) noexcept
   {
+    if (sim == nullptr || sim->mMapData == nullptr || sim->mMapData->GetHeightField() == nullptr) {
+      return 0u;
+    }
     const moho::CHeightField* const field = sim->mMapData->GetHeightField();
     return static_cast<std::uint32_t>(field->height - 1);
   }
@@ -515,6 +521,14 @@ namespace moho
     return mOccupation.GetRectOr(rect.x0, rect.z0, rect.x1 - rect.x0, rect.z1 - rect.z0, true);
   }
 
+  void COGrid::ClearDynamicOccupancy()
+  {
+    if (mOccupation.ptr != nullptr && mOccupation.size > 0) {
+      std::fill_n(mOccupation.ptr, mOccupation.size, 0);
+    }
+    mEntityOccupationManager.Clear();
+  }
+
   /**
    * Address: 0x004FCE10 (FUN_004FCE10, ??1EntityOccupationManager@Moho@@QAE@@Z)
    */
@@ -529,6 +543,37 @@ namespace moho
     const int blockCount = static_cast<int>(mAllBlocks.size());
     for (int index = 0; index < blockCount; ++index) {
       operator delete[](mAllBlocks[index]);
+    }
+  }
+
+  void EntityOccupationManager::Clear()
+  {
+    if (mLastIndex < 0) {
+      return;
+    }
+    const std::size_t bucketCount = static_cast<std::size_t>(mLastIndex + 1);
+    const std::size_t bucketBytes = bucketCount * sizeof(void*);
+    if (mUnitBuckets != nullptr) {
+      std::memset(mUnitBuckets, 0, bucketBytes);
+    }
+    if (mPropBuckets != nullptr) {
+      std::memset(mPropBuckets, 0, bucketBytes);
+    }
+    if (mEntityBuckets != nullptr) {
+      std::memset(mEntityBuckets, 0, bucketBytes);
+    }
+
+    mFreeNodeHead = nullptr;
+    mFreeNodeCount = 0;
+    for (EntityCollisionCellNode* const chunk : mAllBlocks) {
+      for (int i = 0; i < 0x1FFF; ++i) {
+        chunk[i].owner = nullptr;
+        chunk[i].next = &chunk[i + 1];
+      }
+      chunk[0x1FFF].owner = nullptr;
+      chunk[0x1FFF].next = mFreeNodeHead;
+      mFreeNodeHead = chunk;
+      mFreeNodeCount += 0x2000;
     }
   }
 

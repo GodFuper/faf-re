@@ -80,10 +80,13 @@ namespace
     }
 
     auto* const iunit = static_cast<moho::IUnit*>(rawObject);
-    gpg::RType* dynamicType = CachedIUnitType();
+    gpg::RType* dynamicType = nullptr;
     try {
       dynamicType = gpg::LookupRType(typeid(*iunit));
     } catch (...) {
+      dynamicType = nullptr;
+    }
+    if (!dynamicType) {
       dynamicType = CachedIUnitType();
     }
 

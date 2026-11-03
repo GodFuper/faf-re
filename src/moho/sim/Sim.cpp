@@ -3964,7 +3964,7 @@ namespace moho
       if (iter.m_keyObj.IsString()) {
         const char* const keyStr = iter.m_keyObj.GetString();
         if (keyStr && restoredKeys.find(keyStr) == restoredKeys.end()) {
-          if (!iter.m_valueObj.IsCFunction()) {
+          if (iter.m_valueObj.Type() != LUA_CFUNCTION) {
             keysToPrune.emplace_back(keyStr);
           }
         }
@@ -4100,7 +4100,6 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
   archive->ReadPointerOwned(&entities, &ownerRef);
   delete std::exchange(mEntityDB, entities);
   gpg::Logf("Sim::SerializeLoadBody: Step 8 (CClosure track)...");
-  TrackLuaCClosures(archive);
   gpg::Logf("Sim::SerializeLoadBody: Step 8 (Lua Globals)...");
 
   LuaPlus::LuaObject globals = mLuaState->GetGlobals();
@@ -4203,27 +4202,6 @@ void Sim::SerVars(gpg::ReadArchive* const archive)
  * What it does:
  * Core Sim save-serialization routine used by Sim serializer callback.
  */
-void Sim::PreTrackLuaCClosures(gpg::WriteArchive* const archive)
-{
-  if (!archive || !mLuaState) {
-    return;
-  }
-  lua_State* const mainState = mLuaState->GetCState();
-  EnumerateLuaCClosures(mainState, [archive](CClosure* const cclosure) {
-    (void)archive->PreCreatedPtr(gpg::MakeRRef(cclosure));
-  });
-}
-
-void Sim::TrackLuaCClosures(gpg::ReadArchive* const archive)
-{
-  if (!archive || !mLuaState) {
-    return;
-  }
-  lua_State* const mainState = mLuaState->GetCState();
-  EnumerateLuaCClosures(mainState, [archive](CClosure* const cclosure) {
-    (void)archive->TrackPointer(gpg::MakeRRef(cclosure));
-  });
-}
 
 bool Sim::CanSnapshot() const
 {
@@ -4331,7 +4309,6 @@ void Sim::SerializeSaveBody(gpg::WriteArchive* archive)
   archive->WritePointer(mEntityDB, gpg::TrackedPointerState::Owned, ownerRef);
 
   gpg::Logf("Sim::MemberSerialize: Step 8 (CClosure pre-track)...");
-  PreTrackLuaCClosures(archive);
   gpg::Logf("Sim::MemberSerialize: Step 8 (Lua Globals)...");
   LuaPlus::LuaObject globals = mLuaState->GetGlobals();
   (void)func_ArchiveWriteLuaObj(archive, &globals);
@@ -4995,14 +4972,17 @@ void Sim::FlushLog()
     mDesyncLogLines.push_back(mDesyncLogLine);
   }
 
-  const int checksumPeriod = ReadSimConVarInt(this, &gSimConVar_sim_ChecksumPeriod, 0);
-  const int retainedLogCount = checksumPeriod + 20;
-  while (static_cast<int>(mDesyncLogLines.size()) > retainedLogCount) {
-    const msvc8::string staleLogPath = mDesyncLogLines.front();
-    mDesyncLogLines.erase(mDesyncLogLines.begin());
+  const int retainAllLogs = ReadSimConVarInt(this, &gSimConVar_sim_RetainAllSyncLogs, 0);
+  if (retainAllLogs == 0) {
+    const int checksumPeriod = ReadSimConVarInt(this, &gSimConVar_sim_ChecksumPeriod, 0);
+    const int retainedLogCount = checksumPeriod + 20;
+    while (static_cast<int>(mDesyncLogLines.size()) > retainedLogCount) {
+      const msvc8::string staleLogPath = mDesyncLogLines.front();
+      mDesyncLogLines.erase(mDesyncLogLines.begin());
 
-    if (!DeleteFileA(staleLogPath.c_str())) {
-      gpg::Warnf("Error deleting sim log file: %s", staleLogPath.c_str());
+      if (!DeleteFileA(staleLogPath.c_str())) {
+        gpg::Warnf("Error deleting sim log file: %s", staleLogPath.c_str());
+      }
     }
   }
 
@@ -6522,6 +6502,7 @@ void Sim::RestoreState(gpg::ReadArchive* const archive, const std::int32_t targe
   } else {
     mCurBeat = mCurTick + 1;
   }
+  mCurCommandSource = 255;
   mContext.Reset();
   for (std::uint32_t b = mCurTick + 1; b <= mCurTick + 128; ++b) {
     mSimHashes[b & 0x7Fu] = gpg::MD5Digest{};
@@ -6573,13 +6554,17 @@ void Sim::RestoreState(gpg::ReadArchive* const archive, const std::int32_t targe
     }
   }
 
-  gpg::Logf("Sim::RestoreState: 8. OnPostLoad...");
-  // Fire the OnPostLoad Lua callback; lookup and call are guarded
-  try {
-    const LuaPlus::LuaFunction<> onPostLoad(mLuaState->GetGlobal("OnPostLoad"));
-    onPostLoad.Call();
-  } catch (const std::exception& error) {
-    gpg::Warnf("OnPostLoad() failed: %s", error.what());
+  if (targetBeat < 0) {
+    gpg::Logf("Sim::RestoreState: 8. OnPostLoad (savegame load only)...");
+    // Fire the OnPostLoad Lua callback; lookup and call are guarded
+    try {
+      const LuaPlus::LuaFunction<> onPostLoad(mLuaState->GetGlobal("OnPostLoad"));
+      onPostLoad.Call();
+    } catch (const std::exception& error) {
+      gpg::Warnf("OnPostLoad() failed: %s", error.what());
+    }
+  } else {
+    gpg::Logf("Sim::RestoreState: 8. Skipping OnPostLoad for snapshot rewind (targetBeat=%d)", targetBeat);
   }
   gpg::Logf("Sim::RestoreState: finished successfully!");
 }

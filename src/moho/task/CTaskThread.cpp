@@ -62,10 +62,12 @@ namespace
     } catch (...) {
       dynamicType = baseType;
     }
+    if (!dynamicType) {
+      dynamicType = baseType;
+    }
 
     std::int32_t baseOffset = 0;
     const bool derived = dynamicType->IsDerivedFrom(baseType, &baseOffset);
-    GPG_ASSERT(derived);
     if (!derived) {
       out.mObj = object;
       out.mType = dynamicType;
@@ -113,7 +115,9 @@ namespace
    */
   CTask* DeserializeOwnedTaskPointer(gpg::ReadArchive* archive, const gpg::RRef& ownerRef)
   {
-    return ReadTypedPointer<CTask>(archive, ownerRef, CachedCTaskType());
+    CTask* task = nullptr;
+    archive->ReadPointerOwned(&task, &ownerRef);
+    return task;
   }
 
   /**
@@ -124,7 +128,9 @@ namespace
    */
   CTask* DeserializeWeakTaskPointer(gpg::ReadArchive* archive, const gpg::RRef& ownerRef)
   {
-    return ReadTypedPointer<CTask>(archive, ownerRef, CachedCTaskType());
+    CTask* task = nullptr;
+    archive->ReadPointer(&task, &ownerRef);
+    return task;
   }
 
   /**

@@ -52,6 +52,11 @@ target_link_libraries(faf_replay_snapshot_tests PRIVATE faf_engine)
 
 add_test(NAME replay_snapshot COMMAND faf_replay_snapshot_tests)
 
+add_executable(faf_sim_rewind_integration_tests EXCLUDE_FROM_ALL moho/sim_rewind_tests.cpp)
+target_link_libraries(faf_sim_rewind_integration_tests PRIVATE faf_engine)
+
+add_test(NAME sim_rewind COMMAND faf_sim_rewind_integration_tests)
+
 add_executable(faf_profiler_tests EXCLUDE_FROM_ALL profiling/ProfilerFacadeTests.cpp)
 target_include_directories(faf_profiler_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
 

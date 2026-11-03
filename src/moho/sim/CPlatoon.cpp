@@ -271,16 +271,21 @@ namespace
       return archive;
     }
 
+    gpg::Logf("ReadPlatoonSquadsFromArchive [%p]: start", platoon);
     moho::CSquad* loadedSquad = nullptr;
     gpg::RRef ownerRef{};
     archive->ReadPointerOwned(&loadedSquad, &ownerRef);
+    int squadIndex = 0;
     while (loadedSquad != nullptr) {
+      gpg::Logf("ReadPlatoonSquadsFromArchive [%p]: read squad %d = %p", platoon, squadIndex, loadedSquad);
       platoon->mSquadList.PushBack(loadedSquad);
 
       loadedSquad = nullptr;
       ownerRef = {};
       archive->ReadPointerOwned(&loadedSquad, &ownerRef);
+      ++squadIndex;
     }
+    gpg::Logf("ReadPlatoonSquadsFromArchive [%p]: done (%d squads)", platoon, squadIndex);
 
     return archive;
   }
@@ -758,7 +763,9 @@ namespace moho
    */
   void CPlatoon::MemberConstruct(gpg::ReadArchive&, const int, const gpg::RRef&, gpg::SerConstructResult& result)
   {
-    result.SetUnowned(gpg::MakeRRef(new CPlatoon()), 0u);
+    CPlatoon* const p = new CPlatoon();
+    gpg::Logf("CPlatoon::MemberConstruct: allocated CPlatoon at %p", p);
+    result.SetUnowned(gpg::MakeRRef(p), 0u);
   }
 
   /**
@@ -770,16 +777,21 @@ namespace moho
    */
   void CSquad::MemberDeserialize(gpg::ReadArchive* const archive)
   {
+    gpg::Logf("CSquad::MemberDeserialize [%p]: start", this);
     gpg::RRef ownerRef{};
     archive->ReadPointer(&mSim, &ownerRef);
+    gpg::Logf("CSquad::MemberDeserialize [%p]: mSim=%p, reading mUnits...", this, mSim);
     archive->Read(CachedUnitSetTypeForCSquadSerializer(), &mUnits, ownerRef);
+    gpg::Logf("CSquad::MemberDeserialize [%p]: mUnits done (size=%zu), reading squad class & name...", this, mUnits.Size());
 
     ownerRef = {};
     archive->Read(CachedESquadClassTypeForCSquadSerializer(), &mSquadClass, ownerRef);
     archive->ReadString(&mName);
+    gpg::Logf("CSquad::MemberDeserialize [%p]: name='%s', reading cats...", this, mName.c_str());
 
     ownerRef = {};
     archive->Read(CachedEntityCategorySetVectorTypeForCSquadSerializer(), &mCats, ownerRef);
+    gpg::Logf("CSquad::MemberDeserialize [%p]: done!", this);
   }
 
   /**
@@ -820,8 +832,10 @@ namespace moho
    */
   void CPlatoon::MemberDeserialize(gpg::ReadArchive* const archive)
   {
+    gpg::Logf("CPlatoon::MemberDeserialize [%p]: start", this);
     gpg::RRef ownerRef{};
     archive->Read(CachedCScriptObjectTypeForCPlatoonSerializer(), this, ownerRef);
+    gpg::Logf("CPlatoon::MemberDeserialize [%p]: CScriptObject base done", this);
 
     ownerRef = {};
     archive->ReadPointer(&mSim, &ownerRef);
@@ -830,8 +844,10 @@ namespace moho
     SimArmy* army = nullptr;
     archive->ReadPointer(&army, &ownerRef);
     mArmy = army;
+    gpg::Logf("CPlatoon::MemberDeserialize [%p]: mSim=%p, mArmy=%p, reading squads...", this, mSim, mArmy);
 
     (void)ReadPlatoonSquadsFromArchive(archive, this);
+    gpg::Logf("CPlatoon::MemberDeserialize [%p]: squads done, reading strings...", this);
     archive->ReadString(&mName);
     archive->ReadString(&mPlan);
     archive->ReadString(&mUniqueName);
@@ -844,6 +860,7 @@ namespace moho
     archive->ReadInt(&mLosses);
     archive->ReadFloat(&mDamageDealt);
     archive->ReadFloat(&mDamageReceived);
+    gpg::Logf("CPlatoon::MemberDeserialize [%p]: done! name='%s', plan='%s'", this, mName.c_str(), mPlan.c_str());
   }
 
   /**

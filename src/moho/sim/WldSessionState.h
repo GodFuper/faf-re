@@ -22,4 +22,19 @@ namespace moho
    */
   using SessionSimDriverHook = ISTIDriver* (*)();
   extern SessionSimDriverHook sSessionSimDriver;
+
+  class ReplaySnapshotManager;
+  using SessionSnapshotManagerHook = ReplaySnapshotManager* (*)();
+  extern SessionSnapshotManagerHook sSessionSnapshotManager;
+  inline ReplaySnapshotManager* SessionGetSnapshotManager()
+  {
+    return sSessionSnapshotManager != nullptr ? sSessionSnapshotManager() : nullptr;
+  }
+
+  using SessionIsScrubbingHook = bool (*)();
+  extern SessionIsScrubbingHook sSessionIsScrubbing;
+  inline bool SessionIsScrubbing()
+  {
+    return sSessionIsScrubbing != nullptr ? sSessionIsScrubbing() : false;
+  }
 } // namespace moho

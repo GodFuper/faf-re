@@ -1342,16 +1342,29 @@ ReadArchive& ReadArchive::TrackPointer(const RRef& objectRef)
  * which hands back a permanently cached, shared `CSndParams`, and then marks
  * it `SetOwned`. Deleting on `Owned` freed those out from under the cache.
  */
-void ReadArchive::EndSection(const bool)
+void ReadArchive::EndSection(const bool hasError)
 {
-  for (TrackedPointerInfo& tracked : mTrackedPtrs) {
+  gpg::Logf("[ReadArchive::EndSection] starting, mTrackedPtrs.size=%zu, hasError=%d", mTrackedPtrs.size(), (int)hasError);
+  for (size_t i = 0; i < mTrackedPtrs.size(); ++i) {
+    TrackedPointerInfo& tracked = mTrackedPtrs[i];
     if (tracked.state == TrackedPointerState::Unowned) {
-      RRef{tracked.object, tracked.type}.Delete();
+      const char* typeName = "<null>";
+      void* deleteFuncPtr = nullptr;
+      if (tracked.type) {
+        typeName = tracked.type->GetName();
+        deleteFuncPtr = reinterpret_cast<void*>(tracked.type->deleteFunc_);
+      }
+      gpg::Logf("[ReadArchive::EndSection] [%zu] UNOWNED obj=%p type=%p (%s) deleteFunc=%p",
+                i, tracked.object, tracked.type, typeName, deleteFuncPtr);
+      if (tracked.object && tracked.type && tracked.type->deleteFunc_) {
+        RRef{tracked.object, tracked.type}.Delete();
+      }
     }
   }
 
   mTypeHandles.clear();
   mTrackedPtrs.clear();
+  gpg::Logf("[ReadArchive::EndSection] completed cleanly");
 }
 
 /**

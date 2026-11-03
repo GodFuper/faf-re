@@ -13454,6 +13454,7 @@ Unit::~Unit()
   ClearGuardFormation(this);
   DestroyUnitEconomyEvents(*this);
   ReleaseOccupyGround();
+  FreeOgridRect();
   DecrementUnitArmyLifetimeStats(*this);
   ClearGuardedByOwners(*this);
 
@@ -17293,11 +17294,11 @@ void Unit::MemberSerialize(gpg::WriteArchive* const archive, const int version)
   archive->Write(ResolveUnitSerializerType<Wm3::Vector3f>(), &GuardedPos, ownerRef);
   archive->Write(ResolveUnitSerializerType<EntitySetTemplate<Unit>>(), &GuardedByList, ownerRef);
 
-  // Owned formation instance.
+  // Formation instance (shared reference, also tracked in CAiFormationDBImpl).
   {
     gpg::RRef ref{};
     gpg::RRef_IFormationInstance(&ref, GuardFormation);
-    gpg::WriteRawPointer(archive, ref, gpg::TrackedPointerState::Owned, unowned);
+    gpg::WriteRawPointer(archive, ref, gpg::TrackedPointerState::Shared, unowned);
   }
 
   archive->WriteBool(mNeedsKillCleanup);
@@ -17453,13 +17454,11 @@ void Unit::MemberDeserialize(gpg::ReadArchive* const archive, const int version)
   archive->Read(ResolveUnitSerializerType<Wm3::Vector3f>(), &GuardedPos, ownerRef);
   archive->Read(ResolveUnitSerializerType<EntitySetTemplate<Unit>>(), &GuardedByList, ownerRef);
 
-  // Formation instance (deleted through the reflection deleting-destructor slot).
+  // Formation instance (shared reference into CAiFormationDBImpl).
   {
     IFormationInstance* formation = nullptr;
-    archive->ReadPointerOwned(&formation, &ownerRef);
-    IFormationInstance* const prior = GuardFormation;
+    archive->ReadPointerWeak_IFormationInstance(&formation, &ownerRef);
     GuardFormation = static_cast<CAiFormationInstance*>(formation);
-    delete prior;
   }
 
   archive->ReadBool(&mNeedsKillCleanup);

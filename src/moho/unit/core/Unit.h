@@ -722,6 +722,7 @@ namespace moho
     // CUnitUpgradeTask (0x005F8A16..0x005F8A39) does the same for the
     // upgraded unit, bypassing Sim::CreateUnit's unit-cap gate.
     friend class CUnitUpgradeTask;
+    friend struct SimRewindTestPeer;
 
   public:
 

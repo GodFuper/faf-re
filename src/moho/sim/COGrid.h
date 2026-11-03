@@ -155,6 +155,11 @@ namespace moho
       const CollisionDBRect& rect,
       EEntityType flags
     );
+
+    /**
+     * Resets all entity, unit, and prop collision bucket chains and restores the free node list.
+     */
+    void Clear();
   };
 
   static_assert(sizeof(EntityOccupationManager) == 0x34, "EntityOccupationManager size must be 0x34");
@@ -240,6 +245,12 @@ namespace moho
      * `Unit::CanReserveOgridRect`; the out-of-line copy has no callers.
      */
     [[nodiscard]] bool IsRectOccupied(const gpg::Rect2i& rect) const;
+
+    /**
+     * Engine addition: clears dynamic unit occupancy bitmap and entity collision buckets
+     * while preserving static terrain and water occupancy maps. Essential for snapshot rewind.
+     */
+    void ClearDynamicOccupancy();
 
     /**
      * Address: 0x00721A90 (FUN_00721A90, Moho::COGrid::ExecuteOccupy)

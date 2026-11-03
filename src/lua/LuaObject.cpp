@@ -19979,17 +19979,6 @@ void LuaState::SetState(lua_State* const state)
 	m_state->stateUserData = this;
 }
 
-void EnumerateLuaCClosures(lua_State* const mainState, std::function<void(CClosure*)> visitor)
-{
-	if (!mainState || !mainState->l_G) {
-		return;
-	}
-	for (GCObject* obj = mainState->l_G->rootgc; obj != nullptr; obj = obj->gch.next) {
-		if (obj->gch.tt == LUA_CFUNCTION) {
-			visitor(&obj->cl.c);
-		}
-	}
-}
 
 /**
  * Address: 0x00921480 (FUN_00921480, func_SerializeNameLuaObject)
@@ -20005,7 +19994,6 @@ void EnumerateLuaCClosures(lua_State* const mainState, std::function<void(CClosu
 	TString* const serializeMapName = luaS_newlstr(state, "__serialize_name_for_object", 0x1Bu);
 	const TObject* const serializeMapObject = luaH_getstr(static_cast<Table*>(state->_gt.value.p), serializeMapName);
 	if (serializeMapObject->tt != LUA_TTABLE) {
-		std::printf("  [Resolve] serializeMapObject->tt = %d (not table %d)\n", serializeMapObject->tt, LUA_TTABLE);
 		return nullptr;
 	}
 

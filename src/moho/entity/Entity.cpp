@@ -917,11 +917,18 @@ namespace
       return {};
     }
 
+    if (!blueprint) {
+      return GetEntityFactory(sim->mLuaState);
+    }
+
     const BlueprintKind kind = GuessBlueprintKind(blueprint);
     const ScriptFallbackSpec fallback = GetScriptFallbackSpec(kind);
     if (!fallback.module || !fallback.className) {
-      const char* id = (blueprint && !blueprint->mBlueprintId.empty()) ? blueprint->mBlueprintId.c_str() : "<unknown>";
-      gpg::Warnf("Can't tell the type of blueprint id '%s'.  No scripts for you -- one year.", id);
+      static std::size_t sWarnCount = 0;
+      if (sWarnCount++ < 10) {
+        const char* id = !blueprint->mBlueprintId.empty() ? blueprint->mBlueprintId.c_str() : "<unknown>";
+        gpg::Warnf("Can't tell the type of blueprint id '%s'.  No scripts for you -- one year.", id);
+      }
       return GetEntityFactory(sim->mLuaState);
     }
 

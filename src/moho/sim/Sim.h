@@ -1452,19 +1452,6 @@ namespace moho
      * What it does:
      * Core Sim save-serialization routine used by Sim serializer callback.
      */
-    /**
-     * Registers every CClosure reachable from the Lua GC root as a
-     * pre-created archive pointer entry so WriteCFunction can resolve them.
-     * Must be called before any archive Write that may reference a CClosure.
-     */
-    void PreTrackLuaCClosures(gpg::WriteArchive* archive);
-
-    /**
-     * Registers every CClosure already present in the live Lua GC root as a
-     * tracked archive pointer so ReadPointer calls for C functions can resolve them.
-     * Must be called after Lua VM init but before deserializing the globals table.
-     */
-    void TrackLuaCClosures(gpg::ReadArchive* archive);
 
     void SerializeSaveBody(gpg::WriteArchive* archive);
 

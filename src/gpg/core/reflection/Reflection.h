@@ -6140,12 +6140,13 @@ namespace gpg
       if (object != nullptr && typeid(*object) != typeid(Object)) {
         thread_local detail::RecentRegisteredTypes sRecent{};
         RType* const runtime = sRecent.Find(typeid(*object));
-
-        std::int32_t baseOffset = 0;
-        if (!runtime->IsDerivedFrom(declared, &baseOffset)) {
-          HandleAssertFailure("isDer", 458, "c:\\work\\rts\\main\\code\\src\\libs\\gpgcore\\reflection\\reflection.h");
+        if (runtime != nullptr) {
+          std::int32_t baseOffset = 0;
+          if (!runtime->IsDerivedFrom(declared, &baseOffset)) {
+            HandleAssertFailure("isDer", 458, "c:\\work\\rts\\main\\code\\src\\libs\\gpgcore\\reflection\\reflection.h");
+          }
+          return RRef{reinterpret_cast<char*>(object) - baseOffset, runtime};
         }
-        return RRef{reinterpret_cast<char*>(object) - baseOffset, runtime};
       }
     }
     return RRef{object, declared};

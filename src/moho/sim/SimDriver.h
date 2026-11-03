@@ -41,6 +41,7 @@
 #endif
 namespace moho
 {
+  struct ReplaySnapshot;
   template <class T>
   class Stats;
 
@@ -674,6 +675,9 @@ namespace moho
 
     void RewindBeats(int32_t beat);
     void RewindBeatsLocked(int32_t beat);
+    bool RequestRewind(const ReplaySnapshot& snapshot);
+    void PreparePendingRewindRequestLocked(boost::mutex::scoped_lock& lock);
+    void WakeIssueThread();
     /**
      * Address context:
      * - FAF patch callback `cfunc_SetFocusArmySim` writes this lane directly.

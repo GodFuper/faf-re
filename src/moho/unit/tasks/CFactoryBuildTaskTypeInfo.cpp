@@ -3,7 +3,9 @@
 #include <new>
 #include <typeinfo>
 
-#include "moho/unit/tasks/CFactoryBuildTask.h"
+#include "moho/unit/tasks/CFactoryBuildTask.h"
+#include "moho/task/CCommandTask.h"
+
 #include "gpg/core/reflection/Reflection.h"
 #include "gpg/core/reflection/StaticInitPhase.h"
 
@@ -57,6 +59,16 @@ namespace moho
     return "CFactoryBuildTask";
   }
 
+  [[nodiscard]] gpg::RType* CachedCCommandTaskType()
+  {
+    gpg::RType* type = moho::CCommandTask::sType;
+    if (!type) {
+      type = gpg::LookupRType(typeid(moho::CCommandTask));
+      moho::CCommandTask::sType = type;
+    }
+    return type;
+  }
+
   void CFactoryBuildTaskTypeInfo::Init()
   {
     size_ = sizeof(CFactoryBuildTask);
@@ -68,7 +80,21 @@ namespace moho
       &DestroyCFactoryBuildTaskInPlace
     );
     gpg::RType::Init();
+    AddBase_CCommandTask(this);
     Finish();
+  }
+
+  void __stdcall CFactoryBuildTaskTypeInfo::AddBase_CCommandTask(gpg::RType* const typeInfo)
+  {
+    gpg::RType* const baseType = CachedCCommandTaskType();
+
+    gpg::RField baseField{};
+    baseField.mName = baseType->GetName();
+    baseField.mType = baseType;
+    baseField.mOffset = 0;
+    baseField.mFlags = 0;
+    baseField.mDesc = nullptr;
+    typeInfo->AddBase(baseField);
   }
 
   /**

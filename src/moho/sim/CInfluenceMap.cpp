@@ -2264,6 +2264,9 @@ namespace moho
           RemoveBlipCell(entry.entityId);
           it = cell->entries.erase(it);
           if (sim) {
+            if (sim->IsSyncLogOn()) {
+              sim->Logf("  inf erase: cell=%td id=0x%08x str=%.4f\n", cell - mMapEntries.begin(), entry.entityId, threatStrengthChecksum);
+            }
             sim->mContext.Update(&threatStrengthChecksum, sizeof(threatStrengthChecksum));
           }
           continue;
@@ -2273,6 +2276,9 @@ namespace moho
         // skips the whole threat contribution; only the checksum below runs.
         if (IsAlliedOrSameArmy(mArmy, entry.sourceArmy)) {
           if (sim) {
+            if (sim->IsSyncLogOn()) {
+              sim->Logf("  inf ally: cell=%td id=0x%08x str=%.4f\n", cell - mMapEntries.begin(), entry.entityId, entry.threatStrength);
+            }
             sim->mContext.Update(&entry.threatStrength, sizeof(entry.threatStrength));
           }
           ++it;
@@ -2362,6 +2368,9 @@ namespace moho
         }
 
         if (sim) {
+          if (sim->IsSyncLogOn()) {
+            sim->Logf("  inf threat: cell=%td id=0x%08x str=%.4f\n", cell - mMapEntries.begin(), entry.entityId, entry.threatStrength);
+          }
           sim->mContext.Update(&entry.threatStrength, sizeof(entry.threatStrength));
         }
         ++it;

@@ -40,7 +40,10 @@ namespace
   {
     static gpg::RType* cachedType = nullptr;
     if (!cachedType) {
-      cachedType = ResolveTypeByAnyName({"CFormationInstance", "Moho::CFormationInstance"});
+      cachedType = gpg::LookupRType(typeid(CFormationInstance));
+      if (!cachedType) {
+        cachedType = ResolveTypeByAnyName({"CFormationInstance", "Moho::CFormationInstance"});
+      }
     }
     return cachedType;
   }

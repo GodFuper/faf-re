@@ -187,6 +187,8 @@ namespace moho
    * Address: 0x00C00E50 (FUN_00C00E50, dynamic atexit destructor for `gSimConVar_sim_ChecksumPeriod`)
    */
   TSimConVar<int> gSimConVar_sim_ChecksumPeriod(false, "sim_ChecksumPeriod", 50);
+  moho::CConAlias gConAlias_sim_RetainAllSyncLogs("sim_RetainAllSyncLogs", "Retain all synclog beat files without purging.", "DoSimCommand sim_RetainAllSyncLogs");
+  TSimConVar<int> gSimConVar_sim_RetainAllSyncLogs(false, "sim_RetainAllSyncLogs", 0);
 
   /**
    * Address: 0x00BDBD50 (FUN_00BDBD50, dynamic initializer for `gConAlias_sim_DebugCrash`)

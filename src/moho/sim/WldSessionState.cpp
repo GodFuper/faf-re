@@ -11,6 +11,8 @@ namespace moho
   CWldSession* gActiveWldSession = nullptr;
   EWldFrameAction gWldFrameAction = EWldFrameAction::Inactive;
   SessionSimDriverHook sSessionSimDriver = nullptr;
+  SessionSnapshotManagerHook sSessionSnapshotManager = nullptr;
+  SessionIsScrubbingHook sSessionIsScrubbing = nullptr;
 
   EWldFrameAction WLD_GetFrameAction()
   {

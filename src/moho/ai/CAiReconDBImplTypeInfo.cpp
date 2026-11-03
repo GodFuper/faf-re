@@ -5,6 +5,8 @@
 #include <new>
 #include <typeinfo>
 
+#include "gpg/core/utils/Logging.h"
+
 #include "gpg/core/containers/ArchiveSerialization.h"
 #include "gpg/core/containers/String.h"
 #include "moho/ai/CAiReconDBImpl.h"
@@ -551,6 +553,7 @@ namespace
    */
   void SerializeReconBlipMapStorage(gpg::WriteArchive* const archive, const std::intptr_t objectPtr, const int, gpg::RRef* const ownerRef)
   {
+    gpg::Logf("SerializeReconBlipMapStorage: objectPtr=%p", reinterpret_cast<void*>(objectPtr));
     if (!archive || objectPtr == 0) {
       return;
     }
@@ -560,6 +563,7 @@ namespace
     );
 
     const unsigned int count = storage ? static_cast<unsigned int>(storage->size()) : 0u;
+    gpg::Logf("SerializeReconBlipMapStorage: count=%u", count);
     archive->WriteUInt(count);
 
     if (!storage || count == 0u) {
@@ -574,9 +578,12 @@ namespace
 
     const gpg::RRef owner = ownerRef ? *ownerRef : gpg::RRef{};
     for (const auto& entry : *storage) {
+      gpg::Logf("SerializeReconBlipMapStorage: writing entry key...");
       archive->Write(keyType, &entry.first, owner);
+      gpg::Logf("SerializeReconBlipMapStorage: writing entry blip=%p...", entry.second);
       gpg::WriteRawPointer(archive, MakeReconBlipObjectRef(entry.second), gpg::TrackedPointerState::Unowned, owner);
     }
+    gpg::Logf("SerializeReconBlipMapStorage: done!");
   }
 
   struct AiReconDBTypeInfoBootstrap

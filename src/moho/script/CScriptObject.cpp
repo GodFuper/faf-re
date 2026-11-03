@@ -668,6 +668,16 @@ void CScriptObject::MemberDeserialize(gpg::ReadArchive* const archive)
 
   luaObjectType = CachedLuaObjectType();
   archive->Read(luaObjectType, &mLuaObj, ownerRef);
+
+  if (cObject.m_state) {
+    CScriptObject** const scriptObjectSlot = ExtractScriptObjectSlotFromLuaObject(cObject);
+    if (scriptObjectSlot) {
+      *scriptObjectSlot = this;
+    }
+  }
+  if (mLuaObj.m_state && mLuaObj.IsTable() && cObject.m_state) {
+    mLuaObj.SetObject("_c_object", cObject);
+  }
 }
 
 /**

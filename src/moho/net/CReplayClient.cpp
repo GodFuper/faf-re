@@ -249,7 +249,8 @@ void CReplayClient::RewindStream(const std::uint64_t pos, const std::int32_t bea
   mAvailableBeatRemote = static_cast<std::uint32_t>(beat);
   mLatestBeatDispatchedRemote = beat;
   mReplayPollRequested = false;
-  Start();
+  mCurrentSourceAllowed = true;
+  mCommandSourceId = 0xFFu;
 }
 
 void CReplayClient::Start()
@@ -280,13 +281,6 @@ void CReplayClient::Start()
     if (replayType != static_cast<std::uint8_t>(ECmdStreamOp::CMDST_Advance)) {
       if (mCurrentSourceAllowed) {
         CClientBase::Process(mReplayMessage);
-
-      {
-        boost::mutex::scoped_lock lock(sOffsetsMutex);
-        if (mReplayStream != nullptr) {
-          sBeatStreamOffsets[mQueuedBeat + 1] = mReplayStream->VirtTell(gpg::Stream::ModeReceive);
-        }
-      }
       }
     } else {
       CClientBase::Process(mReplayMessage);

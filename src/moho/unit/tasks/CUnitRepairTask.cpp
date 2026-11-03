@@ -135,6 +135,23 @@ namespace moho
   }
 
   /**
+   * Address: 0x005F8BE0 (FUN_005F8BE0, ??0CUnitRepairTask@Moho@@QAE@@Z)
+   */
+  CUnitRepairTask::CUnitRepairTask()
+    : CCommandTask()
+    , Listener<ECommandEvent>()
+    , mBuildHelper("Repair", nullptr)
+    , mCommand(nullptr)
+    , mTargetUnit{}
+    , mBuildTargetUnit{}
+    , mInPosition(false)
+    , mIsSilo(false)
+    , mGuardAssistMode(false)
+    , mInheritingWork(false)
+  {
+  }
+
+  /**
    * Address: 0x005F8C80 (FUN_005F8C80, ??0CUnitRepairTask@Moho@@QAE@@Z)
    *
    * What it does:

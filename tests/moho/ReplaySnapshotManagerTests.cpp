@@ -6,19 +6,19 @@ int main()
 {
   moho::ReplaySnapshotManager manager(3);
   assert(manager.GetSnapshotCount() == 0);
-  assert(manager.FindNearestSnapshot(100) == nullptr);
+  assert(!manager.FindNearestSnapshot(100).has_value());
 
   // Set base snapshot at beat 0
   moho::ReplaySnapshot baseSnap;
   baseSnap.beat = 0;
   baseSnap.streamOffset = 1000;
   manager.SetBaseSnapshot(baseSnap);
-  assert(manager.GetBaseSnapshot() != nullptr);
+  assert(manager.HasBaseSnapshot());
   assert(manager.GetBaseSnapshot()->beat == 0);
 
   // When ring buffer is empty, FindNearestSnapshot returns base snapshot
-  const auto* snap = manager.FindNearestSnapshot(150);
-  assert(snap != nullptr && snap->beat == 0);
+  const auto snap = manager.FindNearestSnapshot(150);
+  assert(snap.has_value() && snap->beat == 0);
 
   // Add periodic snapshots
   moho::ReplaySnapshot s1;
@@ -53,7 +53,7 @@ int main()
   // Clear test
   manager.Clear();
   assert(manager.GetSnapshotCount() == 0);
-  assert(manager.GetBaseSnapshot() == nullptr);
+  assert(!manager.HasBaseSnapshot());
 
   std::printf("ReplaySnapshotManager tests passed!\n");
   return 0;

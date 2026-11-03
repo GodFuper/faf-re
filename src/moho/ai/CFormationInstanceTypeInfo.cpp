@@ -23,9 +23,14 @@ namespace
   {
     if (!IFormationInstance::sType) {
       IFormationInstance::sType = gpg::LookupRType(typeid(IFormationInstance));
+      if (!IFormationInstance::sType) {
+        IFormationInstance::sType = gpg::REF_FindTypeNamed("IFormationInstance");
+      }
     }
 
-    typeInfo->AddBase(gpg::RField{IFormationInstance::sType->GetName(), IFormationInstance::sType, 0});
+    if (IFormationInstance::sType) {
+      typeInfo->AddBase(gpg::RField{IFormationInstance::sType->GetName(), IFormationInstance::sType, 0});
+    }
   }
 
   /**

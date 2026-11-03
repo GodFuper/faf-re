@@ -471,17 +471,73 @@ function CreateReplayTimeline(parent)
         end
 
         LOG(string.format("FAFENGINE: Timeline seeking replay from tick %d to tick %d", curTick, targetTick))
+        LOG("FAFENGINE: Calling DoScrub")
         DoScrub(targetTick)
+        LOG("FAFENGINE: Returned from DoScrub")
         if controls.overlay then
+            LOG("FAFENGINE: Calling controls.overlay:ShowOverlay")
             controls.overlay:ShowOverlay(targetTick)
+            LOG("FAFENGINE: Returned from ShowOverlay")
         end
     end
+
+    local isAutoScrub = false
+    local hasCmd = rawget(_G, 'HasCommandLineArg')
+    if is_callable(hasCmd) then
+        local ok, res = pcall(hasCmd, '/autoscrub')
+        if ok and res then
+            isAutoScrub = true
+            LOG("FAFENGINE: /autoscrub command line flag detected! Automated scrubbing test enabled.")
+        end
+    end
+    local autoScrubStep = 0
+    local autoScrubCooldown = 0
+    local autoScrubStatusTimer = 0
 
     local loggedOnce = false
     bar:SetNeedsFrameUpdate(true)
     bar.OnFrame = function(self, deltaTime)
         local total = GetTotalTicks()
         local curTick = GetCurrentTick()
+
+        if isAutoScrub then
+            local isScrub = IsScrubbing()
+            if autoScrubCooldown > 0 then
+                autoScrubCooldown = autoScrubCooldown - deltaTime
+            end
+
+            autoScrubStatusTimer = (autoScrubStatusTimer or 0) + deltaTime
+            if autoScrubStatusTimer >= 1.0 then
+                autoScrubStatusTimer = 0
+                LOG(string.format("AUTOTEST_STATUS: step=%d isScrub=%s curTick=%d cooldown=%.1f", autoScrubStep, tostring(isScrub), curTick, autoScrubCooldown))
+            end
+
+            if autoScrubCooldown <= 0 then
+                if autoScrubStep == 0 and curTick >= 50 and not isScrub then
+                    autoScrubStep = 1
+                    autoScrubCooldown = 1.0
+                    LOG("AUTOTEST: Step 1 -> Seeking to tick 2400 (4 min)")
+                    slider:OnValueSet(2400)
+                elseif autoScrubStep == 1 and not isScrub then
+                    autoScrubStep = 2
+                    autoScrubCooldown = 1.0
+                    LOG(string.format("AUTOTEST: Step 1 COMPLETE at tick %d! Now Step 2 -> Seeking back to tick 1200 (2 min)", curTick))
+                    slider:OnValueSet(1200)
+                elseif autoScrubStep == 2 and not isScrub then
+                    autoScrubStep = 3
+                    autoScrubCooldown = 1.0
+                    LOG(string.format("AUTOTEST: Step 2 COMPLETE at tick %d! Now Step 3 -> Seeking forward again to tick 2400 (4 min)", curTick))
+                    slider:OnValueSet(2400)
+                elseif autoScrubStep == 3 and not isScrub then
+                    autoScrubStep = 4
+                    LOG(string.format("AUTOTEST: SUCCESS! Reached tick %d after 2400 -> 1200 -> 2400 scrubbing! Test passed!", curTick))
+                    local exitApp = rawget(_G, 'ExitApplication')
+                    if is_callable(exitApp) then
+                        exitApp()
+                    end
+                end
+            end
+        end
 
         if total and total > 0 then
             if slider._endValue ~= total then

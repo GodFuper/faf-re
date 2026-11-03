@@ -269,9 +269,11 @@ namespace moho
   std::int32_t sim_ScrubMaxBeatsPerFrame = 500;
   float sim_ScrubTimeBudgetMs = 15.0f;
   std::int32_t CWldSession::sPendingRestartScrubTarget = -1;
-std::int32_t sim_ReplaySnapshotInterval = 300;
+  extern std::int32_t sim_ReplaySnapshotInterval;
   std::int32_t sim_ReplaySnapshotMax = 8;
+  extern std::int32_t sim_DumpSnapshots;
   static std::unique_ptr<ReplaySnapshotManager> sSnapshotManager;
+  static bool sInitialSnapshotBootAttempted = false;
 
 
   namespace
@@ -297,6 +299,12 @@ std::int32_t sim_ReplaySnapshotInterval = 300;
       "sim_ReplaySnapshotMax",
       "Maximum number of replay in-memory snapshots preserved in the ring buffer.",
       &sim_ReplaySnapshotMax
+    );
+
+    TConVar<int> gTConVar_sim_DumpSnapshots(
+      "sim_DumpSnapshots",
+      "Dump replay state snapshots to disk when captured (0=off, 1=on).",
+      &sim_DumpSnapshots
     );
   } // namespace
 
@@ -8884,6 +8892,20 @@ namespace moho
       }
     }
 
+    // Engine addition: `/reloadsnapattick N` immediately reloads snapshot at tick N for parity verification
+    {
+      static int sReloadSnapAtTick = -2;
+      if (sReloadSnapAtTick == -2) {
+        msvc8::vector<msvc8::string> args;
+        sReloadSnapAtTick = CFG_GetArgOption("/reloadsnapattick", 1u, &args) && !args.empty() ? std::atoi(args[0].c_str()) : -1;
+      }
+      if (sReloadSnapAtTick >= 0 && static_cast<int>(mGameTick) == sReloadSnapAtTick) {
+        gpg::Logf("reloadsnapattick: reached game tick %d, triggering StartScrubToBeat(%d)...", static_cast<int>(mGameTick), sReloadSnapAtTick);
+        sReloadSnapAtTick = -1;
+        StartScrubToBeat(static_cast<int>(mGameTick));
+      }
+    }
+
     if (mPendingSaveData) {
       ApplyPendingSaveData();
     }
@@ -9009,7 +9031,16 @@ namespace moho
     if (snapshot.streamOffset == 0) {
       snapshot.streamOffset = replayClient->GetStreamPosition();
     }
+    snapshot.lastPeriodicBeat = beat;
     snapshot.simHash = sim->mSimHashes[static_cast<std::uint32_t>(beat) & 0x7Fu];
+    for (std::int32_t b = beat; b >= std::max(0, beat - 127); --b) {
+      const gpg::MD5Digest& d = sim->mSimHashes[static_cast<std::uint32_t>(b) & 0x7Fu];
+      if ((d.vals[0] | d.vals[1] | d.vals[2] | d.vals[3]) != 0) {
+        snapshot.lastPeriodicBeat = b;
+        snapshot.simHash = d;
+        break;
+      }
+    }
     snapshot.file.reset(rawFile, SFileStarCloser{});
 
     try {
@@ -9064,54 +9095,54 @@ namespace moho
         return;
       }
 
-      const ReplaySnapshot* const snap = sSnapshotManager->FindNearestSnapshot(clampedTarget);
-      if (snap == nullptr || !snap->file) {
+      const auto snapOpt = sSnapshotManager->FindNearestSnapshot(clampedTarget);
+      if (!snapOpt.has_value() || !snapOpt->file) {
         gpg::Warnf("CWldSession::StartScrubToBeat: rewind failed, no snapshot found <= %d", clampedTarget);
         CancelScrub();
         return;
       }
 
+      const ReplaySnapshot& snap = *snapOpt;
       gpg::Logf(
         "CWldSession::StartScrubToBeat: rewinding from tick %d to snapshot tick %d (target %d, offset %llu)",
-        mGameTick, snap->beat, clampedTarget, snap->streamOffset
+        mGameTick, snap.beat, clampedTarget, snap.streamOffset
       );
 
       mIsScrubbing = true;
-      mScrubStartBeat = snap->beat;
+      mScrubStartBeat = snap.beat;
       mScrubTargetBeat = clampedTarget;
 
-      // 1. Rewind driver, client manager and replay stream
       CSimDriver* const simDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
       if (simDriver != nullptr) {
-        simDriver->RewindBeats(snap->beat);
-        if (CClientManagerImpl* const clientMgr = simDriver->GetClientManager()) {
-          clientMgr->RewindBeats(snap->beat);
-          if (!clientMgr->mClients.empty()) {
-            if (CReplayClient* const replayClient = dynamic_cast<CReplayClient*>(clientMgr->mClients[0])) {
-              replayClient->RewindStream(snap->streamOffset, snap->beat);
-            }
+        SetSelectionUnits({});
+        for (auto& [id, entity] : mEntities) {
+          delete entity;
+        }
+        mEntities.clear();
+        for (auto orphan = mOrphans.begin(); orphan != mOrphans.end();) {
+          UserEntity* const entity = *orphan;
+          ++orphan;
+          delete entity;
+        }
+        mOrphans.Clear();
+        for (UserArmy* army : userArmies) {
+          if (army != nullptr) {
+            army->mAvatars.clear();
+            army->mEngineers.Clear();
+            army->mFactories.Clear();
           }
         }
-      }
-
-      // 2. Restore Sim state
-      if (simDriver != nullptr) {
-        if (Sim* const sim = simDriver->GetSim()) {
-          std::fseek(snap->file.get(), 0, SEEK_SET);
-          std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(snap->file));
-          sim->RestoreState(readArchive.get());
-          std::fseek(snap->file.get(), 0, SEEK_SET);
-          sim->mSimHashes[static_cast<std::uint32_t>(snap->beat) & 0x7Fu] = snap->simHash;
+        if (!simDriver->RequestRewind(snap)) {
+          gpg::Warnf("CWldSession::StartScrubToBeat: RequestRewind failed!");
+          CancelScrub();
+          return;
         }
       }
 
-      mGameTick = snap->beat;
+      mGameTick = snap.beat;
       mTimeSinceLastTick = 0.0f;
-      if (simDriver != nullptr) {
-        SetSelectionUnits({});
-      }
 
-      if (clampedTarget == snap->beat) {
+      if (clampedTarget == snap.beat) {
         mIsScrubbing = false;
         mScrubTargetBeat = -1;
       }
@@ -9121,6 +9152,11 @@ namespace moho
     mScrubTargetBeat = clampedTarget;
     mScrubStartBeat = mGameTick;
     mIsScrubbing = true;
+
+    CSimDriver* const simDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
+    if (simDriver != nullptr) {
+      simDriver->WakeIssueThread();
+    }
   }
 
   /**
@@ -9132,6 +9168,10 @@ namespace moho
     mScrubTargetBeat = -1;
     sPendingRestartScrubTarget = -1;
     mTimeSinceLastTick = 0.0f;
+    CSimDriver* const simDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
+    if (simDriver != nullptr) {
+      simDriver->WakeIssueThread();
+    }
   }
 
   /**
@@ -9195,6 +9235,11 @@ namespace moho
 
     std::int32_t beatsApplied = 0;
     if (mIsScrubbing) {
+      static int sLastLoggedTick = -1;
+      if (mGameTick != sLastLoggedTick) {
+        sLastLoggedTick = mGameTick;
+        gpg::Logf("CWldSession::SessionFrame: scrubbing tick=%d target=%d hasSync=%d", mGameTick, mScrubTargetBeat, (simDriver != nullptr && simDriver->HasSyncData()) ? 1 : 0);
+      }
       if (simDriver != nullptr) {
         const auto startTime = std::chrono::steady_clock::now();
         const float timeBudgetMs = sim_ScrubTimeBudgetMs > 0.0f ? sim_ScrubTimeBudgetMs : 15.0f;
@@ -9219,10 +9264,14 @@ namespace moho
       }
 
       if (mGameTick >= mScrubTargetBeat || (IsGameOver != 0) || (mTotalReplayBeats > 0 && mGameTick >= mTotalReplayBeats)) {
+        gpg::Logf("CWldSession::SessionFrame: scrub completed at tick %d (target was %d)", mGameTick, mScrubTargetBeat);
         mIsScrubbing = false;
         mScrubTargetBeat = -1;
         mTimeSinceLastTick = 0.0f;
         SetSelectionUnits({});
+        if (CSimDriver* const cSimDriver = dynamic_cast<CSimDriver*>(simDriver)) {
+          cSimDriver->WakeIssueThread();
+        }
       }
     } else {
       // Drain the driver's sync queue. Bounded at 100 beats so a burst after a
@@ -9262,20 +9311,10 @@ namespace moho
       mTimeSinceLastTick = 0.0f;
     }
 
-    if (IsReplay && !mIsScrubbing) {
-      if (sSnapshotManager == nullptr) {
-        sSnapshotManager = std::make_unique<ReplaySnapshotManager>(
-          sim_ReplaySnapshotMax > 0 ? static_cast<std::size_t>(sim_ReplaySnapshotMax) : 8
-        );
-      }
-      static std::int32_t sLastSnapshotBeat = -1;
-      if (sSnapshotManager->GetBaseSnapshot() == nullptr) {
-        CaptureReplaySnapshot(this, mGameTick, /*isBase=*/true);
-        sLastSnapshotBeat = mGameTick;
-      } else if (sim_ReplaySnapshotInterval > 0 && (mGameTick - sLastSnapshotBeat >= sim_ReplaySnapshotInterval)) {
-        CaptureReplaySnapshot(this, mGameTick, /*isBase=*/false);
-        sLastSnapshotBeat = mGameTick;
-      }
+    if (IsReplay && sSnapshotManager == nullptr) {
+      sSnapshotManager = std::make_unique<ReplaySnapshotManager>(
+        sim_ReplaySnapshotMax > 0 ? static_cast<std::size_t>(sim_ReplaySnapshotMax) : 8
+      );
     }
 
     if (const boost::shared_ptr<UICommandGraph> commandGraph = GetCommandGraph(false)) {
@@ -15245,6 +15284,60 @@ namespace moho
       }
 
       if (CWldSession* const activeSession = WLD_GetActiveSession(); activeSession != nullptr) {
+        if (!sInitialSnapshotBootAttempted) {
+          sInitialSnapshotBootAttempted = true;
+          msvc8::vector<msvc8::string> snapArgs;
+          if (CFG_GetArgOption("/snapshot", 1u, &snapArgs) && !snapArgs.empty()) {
+            const msvc8::string snapPath = snapArgs[0];
+            ReplaySnapshot snap{};
+            if (LoadSnapshotFromFile(snapPath.c_str(), snap)) {
+              msvc8::vector<msvc8::string> valArgs;
+              if (CFG_GetArgOption("/snapshotbeat", 1u, &valArgs) && !valArgs.empty()) {
+                snap.beat = std::atoi(valArgs[0].c_str());
+              }
+              if (CFG_GetArgOption("/snapshotoffset", 1u, &valArgs) && !valArgs.empty()) {
+                snap.streamOffset = std::strtoull(valArgs[0].c_str(), nullptr, 10);
+              }
+              gpg::Logf("InitialSnapshotBoot: booting directly from snapshot %s (beat=%d, streamOffset=%llu)...",
+                        snapPath.c_str(), snap.beat, static_cast<unsigned long long>(snap.streamOffset));
+
+              CSimDriver* const cSimDriver = dynamic_cast<CSimDriver*>(sSimDriver.get());
+              if (cSimDriver != nullptr) {
+                activeSession->SetSelectionUnits({});
+                for (auto& [id, entity] : activeSession->mEntities) {
+                  delete entity;
+                }
+                activeSession->mEntities.clear();
+                for (auto orphan = activeSession->mOrphans.begin(); orphan != activeSession->mOrphans.end();) {
+                  UserEntity* const entity = *orphan;
+                  ++orphan;
+                  delete entity;
+                }
+                activeSession->mOrphans.Clear();
+                for (UserArmy* army : activeSession->userArmies) {
+                  if (army != nullptr) {
+                    army->mAvatars.clear();
+                    army->mEngineers.Clear();
+                    army->mFactories.Clear();
+                  }
+                }
+                if (cSimDriver->RequestRewind(snap)) {
+                  activeSession->mGameTick = snap.beat;
+                  activeSession->mTimeSinceLastTick = 0.0f;
+                  gpg::Logf("InitialSnapshotBoot: restored successfully to tick %d", snap.beat);
+                  if (activeSession->GetSnapshotManager()) {
+                    activeSession->GetSnapshotManager()->SetBaseSnapshot(snap);
+                  }
+                } else {
+                  gpg::Warnf("InitialSnapshotBoot: RequestRewind failed for snapshot %s!", snapPath.c_str());
+                }
+              }
+            } else {
+              gpg::Warnf("InitialSnapshotBoot: failed to load snapshot file %s!", snapPath.c_str());
+            }
+          }
+        }
+
         if (CWldSession::sPendingRestartScrubTarget >= 0) {
           const std::int32_t restartTarget = CWldSession::sPendingRestartScrubTarget;
           CWldSession::sPendingRestartScrubTarget = -1;
@@ -15561,6 +15654,7 @@ namespace moho
     if (gWldFrameAction != EWldFrameAction::Preload && gWldFrameAction != EWldFrameAction::CreateSession) {
       CWldSession::sPendingRestartScrubTarget = -1;
     }
+    sInitialSnapshotBootAttempted = false;
     sSnapshotManager.reset();
 
     if (sSimDriver) {
@@ -15837,7 +15931,19 @@ namespace
     return moho::sSimDriver.get();
   }
 
+  moho::ReplaySnapshotManager* SessionSnapshotManager()
+  {
+    return moho::CWldSession::GetSnapshotManager();
+  }
+
+  bool SessionIsScrubbingImpl()
+  {
+    return moho::gActiveWldSession != nullptr && moho::gActiveWldSession->IsScrubbing();
+  }
+
   [[maybe_unused]] const bool gSessionSimDriverSet = (moho::sSessionSimDriver = &SessionSimDriver, true);
+  [[maybe_unused]] const bool gSessionSnapshotManagerSet = (moho::sSessionSnapshotManager = &SessionSnapshotManager, true);
+  [[maybe_unused]] const bool gSessionIsScrubbingSet = (moho::sSessionIsScrubbing = &SessionIsScrubbingImpl, true);
 } // namespace
 
 

@@ -1948,11 +1948,9 @@ namespace moho
 
     const gpg::RRef ownerRef{};
 
-    gpg::RType* const weakPtrType = CachedWeakPtrIUnitType();
-    GPG_ASSERT(weakPtrType != nullptr);
-    if (weakPtrType) {
-      archive->Read(weakPtrType, &mUnit, ownerRef);
-    }
+    EntId unitId = -1;
+    archive->ReadInt(&unitId);
+    mUnit.Set(nullptr);
 
     archive->ReadInt(&mLeaderPriority);
 
@@ -1989,11 +1987,9 @@ namespace moho
 
     const gpg::RRef ownerRef{};
 
-    gpg::RType* const weakPtrType = CachedWeakPtrIUnitType();
-    GPG_ASSERT(weakPtrType != nullptr);
-    if (weakPtrType) {
-      archive->Write(weakPtrType, &mUnit, ownerRef);
-    }
+    IUnit* const unitPtr = mUnit.GetObjectPtr();
+    const EntId unitId = (unitPtr != nullptr) ? unitPtr->GetEntityId() : -1;
+    archive->WriteInt(unitId);
 
     archive->WriteInt(mLeaderPriority);
 
@@ -2057,11 +2053,9 @@ namespace moho
     archive->WriteFloat(mSpeed);
     archive->WriteFloat(mAvgDistToTarget);
 
-    gpg::RType* const weakPtrType = CachedWeakPtrIUnitType();
-    GPG_ASSERT(weakPtrType != nullptr);
-    if (weakPtrType) {
-      archive->Write(weakPtrType, &mLeader, ownerRef);
-    }
+    IUnit* const leaderUnit = mLeader.GetObjectPtr();
+    const EntId leaderId = (leaderUnit != nullptr) ? leaderUnit->GetEntityId() : -1;
+    archive->WriteInt(leaderId);
   }
 
   /**
@@ -2127,11 +2121,9 @@ namespace moho
     archive->ReadFloat(&mSpeed);
     archive->ReadFloat(&mAvgDistToTarget);
 
-    gpg::RType* const weakPtrType = CachedWeakPtrIUnitType();
-    GPG_ASSERT(weakPtrType != nullptr);
-    if (weakPtrType) {
-      archive->Read(weakPtrType, &mLeader, ownerRef);
-    }
+    EntId leaderId = -1;
+    archive->ReadInt(&leaderId);
+    mLeader.Set(nullptr);
   }
 
   /**
@@ -2181,18 +2173,23 @@ namespace moho
     if (gpg::RType* const baseType = CachedIFormationInstanceType(); baseType != nullptr) {
       archive->Write(baseType, static_cast<IFormationInstance*>(self), ownerRef);
     }
-
     gpg::RRef pointerRef{};
     pointerRef = gpg::MakeRRef<LuaPlus::LuaState>(mState);
     gpg::WriteRawPointer(archive, pointerRef, gpg::TrackedPointerState::Unowned, ownerRef);
     pointerRef = gpg::MakeRRef<moho::RRuleGameRules>(mGamerules);
     gpg::WriteRawPointer(archive, pointerRef, gpg::TrackedPointerState::Unowned, ownerRef);
 
-    WriteFormationField(archive, CachedEUnitCommandTypeType(), &self->mCommandType, ownerRef);
-    WriteFormationField(archive, CachedFastVectorWeakPtrIUnitType(), &self->mUnits, ownerRef);
-    WriteFormationField(archive, CachedFastVectorSOffsetInfoType(), &self->mOffsetInfo[0], ownerRef);
-    WriteFormationField(archive, CachedFastVectorSOffsetInfoType(), &self->mOffsetInfo[1], ownerRef);
-    WriteFormationField(archive, CachedFastVectorSAssignedLocInfoType(), &self->mSlots, ownerRef);
+    archive->WriteInt(static_cast<std::int32_t>(self->mCommandType));
+    const unsigned int unitCount = static_cast<unsigned int>(self->mUnits.size());
+    archive->WriteUInt(unitCount);
+    for (unsigned int i = 0; i < unitCount; ++i) {
+      IUnit* const u = self->mUnits[i].GetObjectPtr();
+      const EntId id = (u != nullptr) ? u->GetEntityId() : -1;
+      archive->WriteInt(id);
+    }
+    SaveFastVectorSOffsetInfo(archive, reinterpret_cast<std::intptr_t>(&self->mOffsetInfo[0]), 0, const_cast<gpg::RRef*>(&ownerRef));
+    SaveFastVectorSOffsetInfo(archive, reinterpret_cast<std::intptr_t>(&self->mOffsetInfo[1]), 0, const_cast<gpg::RRef*>(&ownerRef));
+    SaveFastVectorSAssignedLocInfo(archive, reinterpret_cast<std::intptr_t>(&self->mSlots), 0, const_cast<gpg::RRef*>(&ownerRef));
     WriteFormationField(archive, CachedMapEntIdSCoordsVec2Type(), &self->mFormationPosCache, ownerRef);
     WriteFormationField(archive, CachedMapEntIdSCoordsVec2Type(), &self->mOffsetPosCache, ownerRef);
     WriteFormationField(archive, CachedVector3fType(), &self->mForwardVector, ownerRef);
@@ -2230,11 +2227,19 @@ namespace moho
     (void)archive->ReadPointer(&mState, &ownerRef);
     (void)archive->ReadPointer(&mGamerules, &ownerRef);
 
-    ReadFormationField(archive, CachedEUnitCommandTypeType(), &mCommandType, ownerRef);
-    ReadFormationField(archive, CachedFastVectorWeakPtrIUnitType(), &mUnits, ownerRef);
-    ReadFormationField(archive, CachedFastVectorSOffsetInfoType(), &mOffsetInfo[0], ownerRef);
-    ReadFormationField(archive, CachedFastVectorSOffsetInfoType(), &mOffsetInfo[1], ownerRef);
-    ReadFormationField(archive, CachedFastVectorSAssignedLocInfoType(), &mSlots, ownerRef);
+    std::int32_t cmdType = 0;
+    archive->ReadInt(&cmdType);
+    mCommandType = static_cast<EUnitCommandType>(cmdType);
+    unsigned int unitCount = 0;
+    archive->ReadUInt(&unitCount);
+    mUnits.clear();
+    for (unsigned int i = 0; i < unitCount; ++i) {
+      EntId id = -1;
+      archive->ReadInt(&id);
+    }
+    LoadFastVectorSOffsetInfo(archive, reinterpret_cast<std::intptr_t>(&mOffsetInfo[0]), 0, const_cast<gpg::RRef*>(&ownerRef));
+    LoadFastVectorSOffsetInfo(archive, reinterpret_cast<std::intptr_t>(&mOffsetInfo[1]), 0, const_cast<gpg::RRef*>(&ownerRef));
+    LoadFastVectorSAssignedLocInfo(archive, reinterpret_cast<std::intptr_t>(&mSlots), 0, const_cast<gpg::RRef*>(&ownerRef));
     ReadFormationField(archive, CachedMapEntIdSCoordsVec2Type(), &mFormationPosCache, ownerRef);
     ReadFormationField(archive, CachedMapEntIdSCoordsVec2Type(), &mOffsetPosCache, ownerRef);
     ReadFormationField(archive, CachedVector3fType(), &mForwardVector, ownerRef);

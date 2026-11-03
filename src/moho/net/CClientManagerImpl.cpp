@@ -1068,13 +1068,17 @@ void CClientManagerImpl::RewindBeats(const int beat)
   mAvailableBeat = beat;
   mFullyQueuedBeat = beat;
   mPartiallyQueuedBeat = beat;
+  mLastEmittedCommandSource = 0xFF;
   mStream.Clear();
   for (CClientBase* client : mClients) {
     if (client != nullptr) {
       client->mQueuedBeat = static_cast<std::uint32_t>(beat);
       client->mDispatchedBeat = static_cast<std::uint32_t>(beat);
+      client->mAvailableBeatRemote = static_cast<std::uint32_t>(beat);
+      client->mLatestBeatDispatchedRemote = beat;
       client->mPipe.Clear();
       client->mLatestAckReceived.assign(client->mLatestAckReceived.size(), beat);
+      client->mCommandSourceId = 0xFFu;
     }
   }
 }

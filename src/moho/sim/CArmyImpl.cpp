@@ -1213,18 +1213,22 @@ namespace moho
    */
   CArmyImpl::~CArmyImpl()
   {
+    gpg::Logf("CArmyImpl::~CArmyImpl [%p] start", this);
     DestroyPlatoonPool(PlatoonPool);
+    gpg::Logf("CArmyImpl::~CArmyImpl [%p] PlatoonPool done", this);
 
     // Evidence: FUN_006FF9A0 at 0x006FFA46 calls FUN_007056D0(begin, end)
     // once over the whole range, then frees the raw array block.
     if (moho::EntitySetTemplate<moho::Unit>* const categorySetsBegin = UnitCategorySets.begin();
         categorySetsBegin != nullptr) {
+      gpg::Logf("CArmyImpl::~CArmyImpl [%p] TeardownEntitySetRange...", this);
       TeardownEntitySetRange(categorySetsBegin, UnitCategorySets.end());
+      gpg::Logf("CArmyImpl::~CArmyImpl [%p] deleting categorySetsBegin (%p)...", this, categorySetsBegin);
       operator delete(categorySetsBegin);
+      gpg::Logf("CArmyImpl::~CArmyImpl [%p] deleted categorySetsBegin", this);
     }
     UnitCategorySets.release_storage_without_free();
 
-    DestroyPlatoonPool(PlatoonPool);
     UnknownShared220.release();
     ReplacePathFinderOwnedPointer(PathFinder, nullptr);
 
@@ -1247,6 +1251,7 @@ namespace moho
     // mBrain (+0x1EC) — CScriptObject declares its dtor at slot 2.
     delete AiBrain;
     AiBrain = nullptr;
+    gpg::Logf("CArmyImpl::~CArmyImpl [%p] finished", this);
   }
 
   /**
@@ -1348,14 +1353,20 @@ namespace moho
     }
 
     const gpg::RRef owner{};
+    int platoonIndex = 0;
     while (true) {
+      gpg::Logf("CArmyImpl::DeserializePlatoons [%p]: reading platoon %d...", this, platoonIndex);
       CPlatoon* const platoon = ReadOwnedCPlatoonPointer(archive, owner);
+      gpg::Logf("CArmyImpl::DeserializePlatoons [%p]: read platoon %d = %p", this, platoonIndex, platoon);
       if (!platoon) {
         break;
       }
 
       PlatoonPool.platoons.PushBack(platoon);
+      gpg::Logf("CArmyImpl::DeserializePlatoons [%p]: pushed platoon %d (count=%zu)", this, platoonIndex, PlatoonPool.platoons.size());
+      ++platoonIndex;
     }
+    gpg::Logf("CArmyImpl::DeserializePlatoons [%p]: done!", this);
   }
 
   /**
@@ -1380,46 +1391,50 @@ namespace moho
    */
   void CArmyImpl::MemberDeserialize(gpg::ReadArchive* const archive)
   {
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] start", this);
     if (!archive) {
       return;
     }
 
     const gpg::RRef owner{};
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading SimArmy base...", this);
     archive->Read(SimArmy::StaticGetClass(), static_cast<SimArmy*>(this), owner);
 
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading Simulation...", this);
     Simulation = ReadPointerTyped<Sim>(archive, owner, ResolveSimType(), false);
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading AiBrain...", this);
     ReplaceDeleteOwnedPointer(AiBrain, ReadPointerTyped<CAiBrain>(archive, owner, ResolveCAiBrainType(), true));
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading AiReconDb...", this);
     ReplaceDeleteOwnedPointer(
       AiReconDb, ReadPointerTyped<CAiReconDBImpl>(archive, owner, ResolveCAiReconDBImplType(), true)
     );
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading EconomyInfo...", this);
     ReplaceEconomyOwnedPointer(EconomyInfo, ReadPointerTyped<CSimArmyEconomyInfo>(archive, owner, ResolveCEconomyType(), true));
 
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading ArmyPlans...", this);
     archive->ReadString(&ArmyPlans);
 
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading Stats...", this);
     ReplaceDeleteOwnedPointer(Stats, ReadPointerTyped<CArmyStats>(archive, owner, ResolveCArmyStatsType(), true));
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading InfluenceMap...", this);
     ReplaceDeleteOwnedPointer(
       InfluenceMap, ReadPointerTyped<CInfluenceMap>(archive, owner, ResolveCInfluenceMapType(), true)
     );
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading PathQueue...", this);
     {
-      // Canonical PathQueue owned-pointer read (recovered from FUN_00707460);
-      // binary stores the pointer as `void*` on CArmyImpl but the archive lane
-      // is typed PathQueue and the upcast/ownership transition must match.
       moho::PathQueue* loadedPathQueue = nullptr;
       (void)archive->ReadPointerOwned(&loadedPathQueue, &owner);
       ReplacePathFinderOwnedPointer(PathFinder, loadedPathQueue);
     }
 
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading UnitCategorySets...", this);
     gpg::RType* const categoryVectorType = ResolveEntitySetTemplateUnitVectorType();
     GPG_ASSERT(categoryVectorType != nullptr);
     if (categoryVectorType != nullptr) {
-      // `RVectorType<EntitySetTemplate<Unit>>::Init()` sets `size_ =
-      // sizeof(msvc8::vector<EntitySetTemplate<Unit>>)` (0x10) and its
-      // SubscriptIndex/GetCount/SetCount cast `obj` straight to the real
-      // vector type -- the reflected object is `UnitCategorySets` itself,
-      // not a 3-word begin/end/capacityEnd view starting 4 bytes into it.
       archive->Read(categoryVectorType, &UnitCategorySets, owner);
     }
 
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading Category Indices & Caps...", this);
     archive->ReadUInt(&UnitCategoryBaseIndex);
     archive->ReadUInt(&UnitCategoryMaxIndex);
     archive->ReadFloat(&UnitCapacity);
@@ -1431,7 +1446,9 @@ namespace moho
     archive->ReadInt(&PathCapacityLand);
     archive->ReadInt(&PathCapacitySea);
     archive->ReadInt(&PathCapacityBoth);
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] reading Platoons...", this);
     DeserializePlatoons(archive);
+    gpg::Logf("CArmyImpl::MemberDeserialize [%p] finished successfully!", this);
   }
 
   /**
@@ -1439,13 +1456,17 @@ namespace moho
    */
   void CArmyImpl::MemberSerialize(gpg::WriteArchive* const archive) const
   {
+    gpg::Logf("CArmyImpl::MemberSerialize: this=%p", this);
     if (!archive) {
       return;
     }
 
     const gpg::RRef owner{};
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] SimArmy...", this);
     archive->Write(SimArmy::StaticGetClass(), static_cast<const SimArmy*>(this), owner);
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] SimArmy done", this);
 
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Simulation...", this);
     WritePointerTyped(
       archive,
       Simulation,
@@ -1453,6 +1474,9 @@ namespace moho
       gpg::TrackedPointerState::Unowned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Simulation done", this);
+
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] AiBrain...", this);
     WritePointerTyped(
       archive,
       AiBrain,
@@ -1460,11 +1484,13 @@ namespace moho
       gpg::TrackedPointerState::Owned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] AiBrain done", this);
 
     gpg::RType* reconType = ResolveIAiReconDBType();
     if (!reconType) {
       reconType = ResolveCAiReconDBImplType();
     }
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] AiReconDb...", this);
     WritePointerTyped(
       archive,
       AiReconDb,
@@ -1472,7 +1498,9 @@ namespace moho
       gpg::TrackedPointerState::Owned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] AiReconDb done", this);
 
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] EconomyInfo...", this);
     WritePointerTyped(
       archive,
       EconomyInfo,
@@ -1480,8 +1508,11 @@ namespace moho
       gpg::TrackedPointerState::Owned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] EconomyInfo done", this);
+
     archive->WriteString(const_cast<msvc8::string*>(&ArmyPlans));
 
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Stats...", this);
     WritePointerTyped(
       archive,
       Stats,
@@ -1489,6 +1520,9 @@ namespace moho
       gpg::TrackedPointerState::Owned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Stats done", this);
+
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] InfluenceMap...", this);
     WritePointerTyped(
       archive,
       InfluenceMap,
@@ -1496,7 +1530,11 @@ namespace moho
       gpg::TrackedPointerState::Owned,
       owner
     );
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] InfluenceMap done", this);
+
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] PathFinder...", this);
     WritePointerTyped(archive, PathFinder, ResolvePathQueueType(), gpg::TrackedPointerState::Owned, owner);
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] PathFinder done", this);
 
     gpg::RType* const categoryVectorType = ResolveEntitySetTemplateUnitVectorType();
     GPG_ASSERT(categoryVectorType != nullptr);
@@ -1511,7 +1549,10 @@ namespace moho
     archive->WriteInt(PathCapacityLand);
     archive->WriteInt(PathCapacitySea);
     archive->WriteInt(PathCapacityBoth);
+
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Platoons...", this);
     SerializePlatoons(archive);
+    gpg::Logf("CArmyImpl::MemberSerialize: [%p] Platoons done", this);
   }
 
   /**

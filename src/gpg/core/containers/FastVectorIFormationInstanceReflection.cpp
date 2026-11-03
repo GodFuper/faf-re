@@ -4,7 +4,9 @@
 #include <cstdint>
 #include <typeinfo>
 
+#include "gpg/core/containers/ReadArchive.h"
 #include "gpg/core/containers/String.h"
+#include "gpg/core/containers/WriteArchive.h"
 #include "gpg/core/utils/Global.h"
 #include "moho/ai/IFormationInstanceCountedPtrReflection.h"
 #include "gpg/core/reflection/StaticInitPhase.h"
@@ -41,7 +43,7 @@ namespace
 
     const gpg::RRef owner = ownerRef ? *ownerRef : gpg::RRef{};
     for (unsigned int i = 0; i < count; ++i) {
-      archive->ReadPointer(&vec[i], &owner);
+      archive->ReadPointerWeak_IFormationInstance(&vec[i], &owner);
     }
   }
 
@@ -67,9 +69,14 @@ namespace
     archive->WriteUInt(count);
 
     for (unsigned int i = 0; i < count; ++i) {
+      if (vec[i] == nullptr) {
+        gpg::RRef nullRef{};
+        gpg::WriteRawPointer(archive, nullRef, gpg::TrackedPointerState::Shared, gpg::RRef{});
+        continue;
+      }
       gpg::RRef ref{};
       gpg::RRef_IFormationInstance(&ref, vec[i]);
-      gpg::WriteRawPointer(archive, ref, gpg::TrackedPointerState::Unowned, gpg::RRef{});
+      gpg::WriteRawPointer(archive, ref, gpg::TrackedPointerState::Shared, gpg::RRef{});
     }
   }
 

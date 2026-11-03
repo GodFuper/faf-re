@@ -41,6 +41,14 @@ namespace moho
     ~CUnitFerryTask() override;
 
     /**
+     * Address: 0x00610210 (FUN_00610210, Moho::CUnitFerryTask::CUnitFerryTask)
+     *
+     * What it does:
+     * Initializes default ferry task fields for reflection/deserialization.
+     */
+    CUnitFerryTask();
+
+    /**
      * Address: 0x0060DD70 (FUN_0060DD70, Moho::CUnitFerryTask::CUnitFerryTask)
      *
      * What it does:

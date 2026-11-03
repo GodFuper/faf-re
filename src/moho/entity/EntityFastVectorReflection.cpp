@@ -17,6 +17,7 @@ namespace
   using EntityPtrVectorType = gpg::RVectorType<moho::Entity*>;
   using EntityPtrVector = msvc8::vector<moho::Entity*>;
   using EntityPtrFastVectorType = gpg::RFastVectorType<moho::Entity*>;
+  using EntityFastVectorStorage = gpg::fastvector_n<moho::Entity*, 4>;
 
   /**
    * Address: 0x00BFC9F0 (FUN_00BFC9F0, atexit destructor of the WeakPtrEntityType object)
@@ -225,7 +226,7 @@ namespace
       return;
     }
 
-    auto& vec = *reinterpret_cast<gpg::fastvector<moho::Entity*>*>(objectPtr);
+    auto& vec = *reinterpret_cast<EntityFastVectorStorage*>(objectPtr);
 
     unsigned int count = 0;
     archive->ReadUInt(&count);
@@ -281,7 +282,7 @@ namespace
       return;
     }
 
-    auto& vec = *reinterpret_cast<gpg::fastvector<moho::Entity*>*>(objectPtr);
+    auto& vec = *reinterpret_cast<EntityFastVectorStorage*>(objectPtr);
 
     unsigned int count = 0;
     archive->ReadUInt(&count);
@@ -315,7 +316,7 @@ namespace
       return;
     }
 
-    const auto& vec = *reinterpret_cast<const gpg::fastvector<moho::Entity*>*>(objectPtr);
+    const auto& vec = *reinterpret_cast<const EntityFastVectorStorage*>(objectPtr);
     const unsigned int count = static_cast<unsigned int>(vec.size());
     archive->WriteUInt(count);
 
@@ -336,7 +337,7 @@ namespace
       return;
     }
 
-    const auto& vec = *reinterpret_cast<const gpg::fastvector<moho::Entity*>*>(objectPtr);
+    const auto& vec = *reinterpret_cast<const EntityFastVectorStorage*>(objectPtr);
 
     const unsigned int count = static_cast<unsigned int>(vec.size());
     archive->WriteUInt(count);
@@ -358,11 +359,11 @@ namespace
   void ResizeFastVectorEntityPointers(
     const unsigned int newSize,
     moho::Entity* const* fillItem,
-    gpg::fastvector<moho::Entity*>& vec
+    EntityFastVectorStorage& vec
   )
   {
     moho::Entity* const fill = fillItem ? *fillItem : nullptr;
-    vec.Resize(newSize, fill);
+    vec.Resize(static_cast<std::size_t>(newSize), fill);
   }
 
   struct EntityFastVectorReflectionBootstrap
@@ -652,7 +653,7 @@ namespace gpg
       return MakeEntityPointerSlotRef(nullptr);
     }
 
-    auto& vec = *static_cast<gpg::fastvector<moho::Entity*>*>(obj);
+    auto& vec = *static_cast<EntityFastVectorStorage*>(obj);
     GPG_ASSERT(ind >= 0);
     GPG_ASSERT(static_cast<std::size_t>(ind) < GetCount(obj));
     if (vec.Data() == nullptr || ind < 0 || static_cast<std::size_t>(ind) >= GetCount(obj)) {
@@ -671,7 +672,7 @@ namespace gpg
       return 0u;
     }
 
-    const auto& vec = *static_cast<const gpg::fastvector<moho::Entity*>*>(obj);
+    const auto& vec = *static_cast<const EntityFastVectorStorage*>(obj);
     return vec.size();
   }
 
@@ -686,7 +687,7 @@ namespace gpg
       return;
     }
 
-    auto& vec = *static_cast<gpg::fastvector<moho::Entity*>*>(obj);
+    auto& vec = *static_cast<EntityFastVectorStorage*>(obj);
     moho::Entity* fill = nullptr;
     ResizeFastVectorEntityPointers(static_cast<unsigned int>(count), &fill, vec);
   }

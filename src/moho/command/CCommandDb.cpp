@@ -268,6 +268,9 @@ namespace moho
     }
 
     archive->WritePointer<moho::CUnitCommand*>(nullptr, gpg::TrackedPointerState::Owned, NullOwnerRef());
+
+    // Serialize command ID pool state to preserve recycled IDs and allocation sequence across snapshot rewind
+    pool.MemberSerialize(archive);
   }
 
   /**
@@ -288,36 +291,46 @@ namespace moho
       return;
     }
 
+    // Engine addition: clear stale commands and reset pool before deserialization (essential for snapshot rewinds)
+    for (auto& [id, cmd] : commands) {
+      delete cmd;
+    }
+    commands.clear();
+    pool.mNextLowId = 0;
+    pool.mReleasedLows = moho::BVIntSet{};
+
     CUnitCommand* command = nullptr;
     gpg::RRef ownerRef{};
     (void)archive->ReadPointerOwned(&command, &ownerRef);
 
+    std::uint32_t maxInternalId = 0;
     while (command != nullptr) {
-      BVIntSet& releasedLowIds = pool.mReleasedLows;
-      std::uint32_t nextLowId = 0u;
-
-      if (releasedLowIds.mWords.Empty()) {
-        nextLowId = static_cast<std::uint32_t>(pool.mNextLowId);
-        pool.mNextLowId = static_cast<std::int32_t>(nextLowId + 1u);
-      } else {
-        nextLowId = releasedLowIds.GetNext(std::numeric_limits<unsigned int>::max());
-        // Inlined at 0x006E1479..0x006E14AA, which is why this read as open-coded
-        // word arithmetic: `WordIndexFor` (`shr 5` / `sub [edi]`), the
-        // `>= WordCount()` early-out (`sar ecx,2` / `jae`), the read-modify-write
-        // of `mWords[wordIndex]` through a `previousWord` temp only the discarded
-        // `bool` needs, then `Finalize` (0x004018A0). `Remove` has its own
-        // out-of-line body at 0x00403650 with eight other callers.
-        (void)releasedLowIds.Remove(nextLowId);
+      CmdId commandId = command->mConstDat.cmd;
+      if (commandId == 0 || (static_cast<std::uint32_t>(commandId) & 0xFF000000u) == 0xFF000000u) {
+        commandId = static_cast<CmdId>(pool.mNextLowId | 0x80000000u);
+        command->mConstDat.cmd = commandId;
+        pool.mNextLowId++;
       }
-
-      const CmdId commandId = static_cast<CmdId>(nextLowId | 0x80000000u);
-      command->mConstDat.cmd = commandId;
-      commands.insert(CommandMap::value_type(commandId, command));
+      if ((static_cast<std::uint32_t>(commandId) & 0x80000000u) != 0 &&
+          (static_cast<std::uint32_t>(commandId) & 0x7F000000u) == 0) {
+        maxInternalId = std::max(maxInternalId, (static_cast<std::uint32_t>(commandId) & 0x00FFFFFFu) + 1u);
+      }
+      commands[commandId] = command;
 
       ownerRef.mObj = nullptr;
       ownerRef.mType = nullptr;
       command = nullptr;
       (void)archive->ReadPointerOwned(&command, &ownerRef);
+    }
+    // Restore IdPool if archive has stream data; otherwise fall back to maxInternalId for legacy saves
+    try {
+      pool.MemberDeserialize(archive);
+    } catch (...) {
+      pool.mNextLowId = 0;
+      pool.mReleasedLows = moho::BVIntSet{};
+      if (maxInternalId > static_cast<std::uint32_t>(pool.mNextLowId)) {
+        pool.mNextLowId = static_cast<std::int32_t>(maxInternalId);
+      }
     }
   }
 

@@ -39,92 +39,6 @@ namespace
     }
     return cached;
   }
-
-  class CUnitRepairTaskReflection final
-    : public moho::CCommandTask
-    , public moho::Listener<moho::ECommandEvent>
-  {
-  public:
-    moho::CBuildTaskHelper mBuildHelper;
-    moho::CUnitCommand* mCommand;
-    moho::WeakPtr<moho::Unit> mTargetUnit;
-    moho::WeakPtr<moho::Unit> mBuildTargetUnit;
-    bool mInPosition;
-    bool mIsSilo;
-    bool mGuardAssistMode;
-    bool mInheritingWork;
-
-    /**
-     * Address: 0x005F8BE0 (FUN_005F8BE0, ??0CUnitRepairTask@Moho@@QAE@@Z)
-     *
-     * What it does:
-     * Initializes the reflection-construction `CUnitRepairTask` storage lane:
-     * listener self-links, build-helper defaults, and weak-target slots.
-     */
-    CUnitRepairTaskReflection()
-      : CCommandTask()
-      , Listener<moho::ECommandEvent>()
-      , mBuildHelper()
-      , mCommand(nullptr)
-      , mTargetUnit{}
-      , mBuildTargetUnit{}
-      , mInPosition(false)
-      , mIsSilo(false)
-      , mGuardAssistMode(false)
-      , mInheritingWork(false)
-    {}
-
-    ~CUnitRepairTaskReflection() override
-    {
-      mTargetUnit.UnlinkFromOwnerChain();
-      mBuildTargetUnit.UnlinkFromOwnerChain();
-    }
-
-    int Execute() override
-    {
-      return -1;
-    }
-
-    void OnEvent(moho::ECommandEvent) override {}
-  };
-
-  static_assert(sizeof(CUnitRepairTaskReflection) == 0x9C, "CUnitRepairTaskReflection size must be 0x9C");
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mBuildHelper) == 0x40,
-    "CUnitRepairTaskReflection::mBuildHelper offset must be 0x40"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mCommand) == 0x84,
-    "CUnitRepairTaskReflection::mCommand offset must be 0x84"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mTargetUnit) == 0x88,
-    "CUnitRepairTaskReflection::mTargetUnit offset must be 0x88"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mBuildTargetUnit) == 0x90,
-    "CUnitRepairTaskReflection::mBuildTargetUnit offset must be 0x90"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mInPosition) == 0x98,
-    "CUnitRepairTaskReflection::mInPosition offset must be 0x98"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mIsSilo) == 0x99, "CUnitRepairTaskReflection::mIsSilo offset must be 0x99"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mGuardAssistMode) == 0x9A,
-    "CUnitRepairTaskReflection::mGuardAssistMode offset must be 0x9A"
-  );
-  static_assert(
-    offsetof(CUnitRepairTaskReflection, mInheritingWork) == 0x9B,
-    "CUnitRepairTaskReflection::mInheritingWork offset must be 0x9B"
-  );
-
-  [[nodiscard]] CUnitRepairTaskReflection* ToReflectionView(moho::CUnitRepairTask* const task) noexcept
-  {
-    return reinterpret_cast<CUnitRepairTaskReflection*>(task);
-  }
 } // namespace
 
 namespace moho
@@ -220,64 +134,56 @@ namespace moho
    * Address: 0x005FC360 (FUN_005FC360, Moho::CUnitRepairTaskTypeInfo::NewRef)
    *
    * What it does:
-   * Allocates one repair-task reflection object and returns its typed
-   * reflection reference.
+   * Allocates one repair-task object and returns its typed reflection reference.
    */
   gpg::RRef CUnitRepairTaskTypeInfo::NewRef()
   {
-    auto* const task = new (std::nothrow) CUnitRepairTaskReflection();
-
-    gpg::RRef ref{};
-    ref = gpg::MakeRRef<moho::CUnitRepairTask>(reinterpret_cast<CUnitRepairTask*>(task));
-    return ref;
+    auto* const task = new (std::nothrow) CUnitRepairTask();
+    return gpg::RRef{task, &AcquireTypeInfo()};
   }
 
   /**
    * Address: 0x005FC400 (FUN_005FC400, Moho::CUnitRepairTaskTypeInfo::CtrRef)
    *
    * What it does:
-   * Placement-constructs one repair-task reflection object in caller-provided
-   * storage and returns its typed reflection reference.
+   * Placement-constructs one repair-task object in caller-provided storage
+   * and returns its typed reflection reference.
    */
   gpg::RRef CUnitRepairTaskTypeInfo::CtrRef(void* const objectStorage)
   {
-    auto* const task = ToReflectionView(static_cast<CUnitRepairTask*>(objectStorage));
+    auto* const task = static_cast<CUnitRepairTask*>(objectStorage);
     if (task) {
-      new (task) CUnitRepairTaskReflection();
+      new (task) CUnitRepairTask();
     }
-
-    gpg::RRef ref{};
-    ref = gpg::MakeRRef<moho::CUnitRepairTask>(reinterpret_cast<CUnitRepairTask*>(task));
-    return ref;
+    return gpg::RRef{task, &AcquireTypeInfo()};
   }
 
   /**
    * Address: 0x005FC3E0 (FUN_005FC3E0, Moho::CUnitRepairTaskTypeInfo::Delete)
    *
    * What it does:
-   * Deletes one heap-owned repair-task reflection object through the deleting
+   * Deletes one heap-owned repair-task object through the deleting
    * destructor lane.
    */
   void CUnitRepairTaskTypeInfo::Delete(void* const objectStorage)
   {
-    delete ToReflectionView(static_cast<CUnitRepairTask*>(objectStorage));
+    delete static_cast<CUnitRepairTask*>(objectStorage);
   }
 
   /**
    * Address: 0x005FC470 (FUN_005FC470, Moho::CUnitRepairTaskTypeInfo::Destruct)
    *
    * What it does:
-   * Runs the non-deleting destructor lane for one repair-task reflection
-   * object.
+   * Runs the non-deleting destructor lane for one repair-task object.
    */
   void CUnitRepairTaskTypeInfo::Destruct(void* const objectStorage)
   {
-    auto* const task = ToReflectionView(static_cast<CUnitRepairTask*>(objectStorage));
+    auto* const task = static_cast<CUnitRepairTask*>(objectStorage);
     if (!task) {
       return;
     }
 
-    task->~CUnitRepairTaskReflection();
+    task->~CUnitRepairTask();
   }
 
   /**
@@ -291,7 +197,6 @@ namespace moho
     (void)AcquireTypeInfo();
   }
 } // namespace moho
-
 
 // Phase-1 pre-registration: run these descriptor registrations ahead of
 // every consumer that calls gpg::LookupRType. See StaticInitPhase.h.

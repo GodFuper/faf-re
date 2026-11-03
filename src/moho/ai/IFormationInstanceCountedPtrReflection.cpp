@@ -206,8 +206,9 @@ namespace gpg
     }
 
     std::int32_t baseOffset = 0;
-    if (!dynamicType->IsDerivedFrom(baseType, &baseOffset)) {
-      gpg::HandleAssertFailure(kIsDerivedAssertExpr, kIsDerivedAssertLine, kReflectionHeaderPath);
+    if (!dynamicType || !dynamicType->IsDerivedFrom(baseType, &baseOffset)) {
+      dynamicType = baseType;
+      baseOffset = 0;
     }
 
     out->mType = dynamicType;
