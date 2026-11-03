@@ -482,13 +482,17 @@ void moho::REF_UpdateMD5(
     || refType == GetBoolRType() || refType->IsEnumType() != nullptr;
 
   if (isPrimitiveLike) {
-    PrintMd5TraceLexical(traceFile, depth, ref.GetLexical());
+    if (traceFile != nullptr) {
+      PrintMd5TraceLexical(traceFile, depth, ref.GetLexical());
+    }
     md5.Update(ref.mObj, static_cast<std::size_t>(refType->size_));
     return;
   }
 
   if (refType == GetStringRType()) {
-    PrintMd5TraceLexical(traceFile, depth, ref.GetLexical());
+    if (traceFile != nullptr) {
+      PrintMd5TraceLexical(traceFile, depth, ref.GetLexical());
+    }
     const auto& stringValue = *static_cast<const msvc8::string*>(ref.mObj);
     md5.Update(stringValue.c_str(), stringValue.size() + 1u);
     return;
@@ -5005,6 +5009,15 @@ namespace moho
 {
   /// Engine addition: switch for MD5UpdateBatch (batched checksum updates). Live; same digests.
   bool sim_ParallelCoords = true;
+  // The trace is text only: the checksum is the same with it or without it.
+  bool dbg_RulesTraceAlways = false;
+  TConVar<bool> gTConVar_dbg_RulesTraceAlways(
+    "dbg_RulesTraceAlways",
+    "Write the rules checksum's text trace to a temporary file at every session start (1), or only when a desync "
+    "recorder is recording (0, the default), since no one else reads it.",
+    &dbg_RulesTraceAlways
+  );
+
   TConVar<bool> gTConVar_sim_ParallelCoords(
     "sim_ParallelCoords",
     "Advance entity coordinates (transforms, history, collision bounds) on sim workers; relinks and intel stay serial (needs sim_Workers > 0).",
@@ -6149,6 +6162,7 @@ Sim::Sim(LaunchInfoBase* const info)
     mRules->ExportToLuaState(mLuaState);
     luaBpScope.Emit();
   }
+  static_cast<RRuleGameRulesImpl*>(mRules)->OnSimHasBlueprints();
 
   {
     LuaPlus::LuaObject globals = mLuaState->GetGlobals();
@@ -6186,7 +6200,10 @@ Sim::Sim(LaunchInfoBase* const info)
   }
 
   // Seed the rolling sim checksum from the rules and log the initial digest.
-  if (CDesyncRecorder* const recorder = CDesyncRecorder::For(this)) {
+  // Engine addition: a recorder that isn't recording drops the text, so with one like that only the
+  // /synclog file, if any, gets the trace (dbg_RulesTraceAlways 1: every session writes it, as before).
+  CDesyncRecorder* const recorder = CDesyncRecorder::For(this);
+  if (recorder != nullptr && (recorder->IsRecording() || dbg_RulesTraceAlways)) {
     // Engine addition (issue #216): REF_UpdateMD5 traces into a FILE*, so the recorder takes the
     // rules trace through a temporary file the CRT deletes when it is closed; the /synclog file,
     // when there is one, gets the same text.
@@ -10660,7 +10677,7 @@ namespace
    *     disagreed with the header's `offsetof(REntityBlueprint,
    *     mCategories) == 0x60` and with `REntityBlueprintTypeInfo::AddFields`
    *     (FUN_00512870, `push 60h` for the reflected "Categories" field).
-   *     It does not: `msvc8::vector<T>` in this codebase is 16 bytes
+   *     It does not: the binary's vector is 16 bytes
    *     (leading `myProxy_` before `first_`/`last_`/`end_`, matching VC8's
    *     `_SECURE_SCL=1` `_Container_base12` proxy word), so `begin()`/
    *     `end()` sit at the vector object's `+0x4`/`+0x8` -- `this+0x64`/
@@ -14752,7 +14769,8 @@ int moho::cfunc_DrawLinePopL(LuaPlus::LuaState* const state)
   lineDirection.z = start.z - end.z;
 
   const float directionLengthSquared =
-    (lineDirection.x * lineDirection.x) + (lineDirection.y * lineDirection.y) + (lineDirection.z * lineDirection.z);
+    // 0x0075DF76: (z*z + y*y) + x*x.
+    ((lineDirection.z * lineDirection.z) + (lineDirection.y * lineDirection.y)) + (lineDirection.x * lineDirection.x);
   if (directionLengthSquared > 0.0f) {
     const float scale = 2.0f / std::sqrt(directionLengthSquared);
     lineDirection.x *= scale;
@@ -19356,8 +19374,9 @@ namespace
 
     const float extentX = p0z - p0x;
     const float extentZ = p1x - p0y;
-    int cursorX = static_cast<int>(std::floor(p0x));
-    int cursorZ = static_cast<int>(std::floor(p0y));
+    // FUN_0040D860's inlined floor (0x0040D908, 0x0040D93A); the step-1 mask is -1.
+    int cursorX = msvc8::FloorToIntX87(p0x);
+    int cursorZ = msvc8::FloorToIntX87(p0y);
 
     for (;;) {
       const int cellDX = dirMaskX ^ cursorX;

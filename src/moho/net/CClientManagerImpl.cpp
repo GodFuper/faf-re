@@ -161,6 +161,7 @@ CClientManagerImpl::CClientManagerImpl(
       net_CheckOrderStreams > 0 ? std::make_unique<CommandStreamCheck>(clientCount, net_CheckOrderStreams >= 2)
                                 : nullptr
     )
+  , mPeerFeatures(std::make_unique<CPeerFeatures>(clientCount))
 {
   mClients.resize(clientCount, nullptr);
 }
@@ -827,6 +828,10 @@ void CClientManagerImpl::Cleanup()
     mDispatchedTimer.Reset();
   }
 
+  // Engine addition (issue #285): before this client's ready, so a peer knows
+  // what it supports before the game runs.
+  mPeerFeatures->Announce(*this);
+
   CMessage message{EClientMsg::CLIMSG_Ready};
   ProcessClients(message);
 }
@@ -1021,6 +1026,22 @@ namespace
       if (waited >= net_LogBeatWaitMs) {
         gpg::Logf("NET: beat %d available %lld ms after beat %d", now, waited, before);
       }
+    }
+    if (net_LogTraffic > 0 && now / net_LogTraffic != before / net_LogTraffic) {
+      if (gNetLinkTrafficLog != nullptr) {
+        gNetLinkTrafficLog(now);
+      }
+      const std::int64_t samples = gNetTraffic.pingSamples.load(std::memory_order_relaxed);
+      const std::int64_t pingSum = gNetTraffic.pingMicrosSum.load(std::memory_order_relaxed);
+      gpg::Logf(
+        "NET: traffic at beat %d: %lld packets, %lld bytes, %lld resends, %lld acks, mean ping %.1f ms",
+        now,
+        static_cast<long long>(gNetTraffic.packets.load(std::memory_order_relaxed)),
+        static_cast<long long>(gNetTraffic.bytes.load(std::memory_order_relaxed)),
+        static_cast<long long>(gNetTraffic.resends.load(std::memory_order_relaxed)),
+        static_cast<long long>(gNetTraffic.acks.load(std::memory_order_relaxed)),
+        samples > 0 ? static_cast<double>(pingSum) / static_cast<double>(samples) / 1000.0 : 0.0
+      );
     }
     sLastAvailableAt = at;
     sLastAvailableBeat = now;

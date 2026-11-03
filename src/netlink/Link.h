@@ -118,6 +118,14 @@ namespace faf::netlink
     std::function<void(const std::string&)> onSignalText;
   };
 
+  /** Packets and bytes every link in this process has given to ICE, before UDP and IP headers. */
+  struct WireTotals
+  {
+    std::uint64_t packets = 0;
+    std::uint64_t bytes = 0;
+  };
+  WireTotals GetWireTotals();
+
   struct LinkStats
   {
     std::uint64_t dataSent = 0;
@@ -234,6 +242,9 @@ namespace faf::netlink
     bool mRemoteWebRtc = false;
     bool mWebRtcGaveUp = false; // for this connection
     std::shared_ptr<WebRtcChannel> mRtc;
+    // mRtc for LaneTransmit, which must not take mMutex (see there). Held only to copy it.
+    std::mutex mLaneRtcMutex;
+    std::shared_ptr<WebRtcChannel> mLaneRtc;
     std::atomic<std::uint64_t> mWebRtcSent{0};
     // Issue #240.
     bool mRemoteLane = false;
