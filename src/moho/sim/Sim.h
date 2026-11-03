@@ -88,6 +88,26 @@ namespace moho
    * (the `/synclog` beat log).
    */
   void REF_UpdateMD5(gpg::MD5Context& md5, const gpg::RRef& ref, std::FILE* traceFile, int indentDepth);
+
+  /**
+   * Address: 0x00744C90 (FUN_00744C90, func_ArchiveWriteLuaObj)
+   *
+   * What it does:
+   * Writes all key/value lanes from one Lua table iterator into archive object
+   * stream as LuaObject entries, then writes one trailing nil marker object.
+   */
+  LuaPlus::LuaObject* func_ArchiveWriteLuaObj(gpg::WriteArchive* archive, LuaPlus::LuaObject* tableObject);
+
+  /**
+   * Address: 0x00744E50 (FUN_00744E50, sub_744E50)
+   *
+   * What it does:
+   * Reads (key, value) LuaObject pairs from rchive and assigns each into
+   * 	able until a nil-key sentinel is read. Used to restore the sim's Lua
+   * globals table at the end of the load-serialization pass. Prunes post-snapshot
+   * dirty globals.
+   */
+  void ReadLuaTableEntriesFromArchive(gpg::ReadArchive* archive, LuaPlus::LuaObject table);
 } // namespace moho
 
 namespace moho
@@ -1189,13 +1209,20 @@ namespace moho
      * What it does:
      * Verifies save mode is allowed and serializes this `Sim` into the provided write archive.
      */
+    /**
+     * Returns true if the simulation is in a state where a full Lua VM snapshot
+     * can be taken safely: no coroutine has active C calls and no open upvalues.
+     * Must be called between sim ticks (not from inside a task callback).
+     */
+    [[nodiscard]] bool CanSnapshot() const;
+
     void SaveState(gpg::WriteArchive* archive);
 
     /**
      * Restores simulation state in-place from the provided read archive,
      * refreshes heightfield bounds, intel vis handles, and triggers Lua OnPostLoad().
      */
-    void RestoreState(gpg::ReadArchive* archive);
+    void RestoreState(gpg::ReadArchive* archive, std::int32_t targetBeat = -1);
 
     /**
      * Address: 0x007457F0 (FUN_007457F0, ?Shutdown@Sim@Moho@@QAEXXZ)
@@ -1425,6 +1452,20 @@ namespace moho
      * What it does:
      * Core Sim save-serialization routine used by Sim serializer callback.
      */
+    /**
+     * Registers every CClosure reachable from the Lua GC root as a
+     * pre-created archive pointer entry so WriteCFunction can resolve them.
+     * Must be called before any archive Write that may reference a CClosure.
+     */
+    void PreTrackLuaCClosures(gpg::WriteArchive* archive);
+
+    /**
+     * Registers every CClosure already present in the live Lua GC root as a
+     * tracked archive pointer so ReadPointer calls for C functions can resolve them.
+     * Must be called after Lua VM init but before deserializing the globals table.
+     */
+    void TrackLuaCClosures(gpg::ReadArchive* archive);
+
     void SerializeSaveBody(gpg::WriteArchive* archive);
 
     // CArmyImpl binary methods read several Sim internals directly (same pattern as retail layout codepaths).

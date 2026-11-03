@@ -27,6 +27,7 @@
 #include <new>
 #include <stdexcept>
 #include <set>
+#include <unordered_set>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -2605,6 +2606,10 @@ namespace
   }
 
 
+} // namespace
+
+namespace moho
+{
   /**
    * Address: 0x00744C90 (FUN_00744C90, func_ArchiveWriteLuaObj)
    *
@@ -2624,17 +2629,25 @@ namespace
       LuaPlus::LuaObject::sType = luaObjectType;
     }
 
-    gpg::RRef nullOwner{};
+    gpg::RRef ownerRef{};
+    if (tableObject && tableObject->m_state) {
+      ownerRef = gpg::MakeRRef<lua_State>(tableObject->m_state->GetCState());
+    }
+
     for (LuaPlus::LuaTableIterator iter(tableObject, 1); !iter.m_isDone; iter.Next()) {
-      archive->Write(luaObjectType, &iter.m_keyObj, nullOwner);
-      archive->Write(luaObjectType, &iter.m_valueObj, nullOwner);
+      archive->Write(luaObjectType, &iter.m_keyObj, ownerRef);
+      archive->Write(luaObjectType, &iter.m_valueObj, ownerRef);
     }
 
     LuaPlus::LuaObject nilObject{};
     nilObject.AssignNil(tableObject->m_state);
-    archive->Write(luaObjectType, &nilObject, nullOwner);
+    archive->Write(luaObjectType, &nilObject, ownerRef);
     return tableObject;
   }
+} // namespace moho
+
+namespace
+{
 
   [[nodiscard]] gpg::RType* ResolveRect2iRType()
   {
@@ -3799,12 +3812,15 @@ void Sim::SerArmies(gpg::WriteArchive* const archive)
   }
 
   const std::uint32_t armyCount = static_cast<std::uint32_t>(mArmiesList.size());
+  gpg::Logf("Sim::SerArmies: armyCount=%u", armyCount);
   WriteArchiveUIntCompat(archive, armyCount);
 
   gpg::RRef ownerRef{};
   for (CArmyImpl* const army : mArmiesList) {
+    gpg::Logf("Sim::SerArmies: saving army=%p", army);
     archive->WritePointer<moho::SimArmy>(army, gpg::TrackedPointerState::Owned, ownerRef);
   }
+  gpg::Logf("Sim::SerArmies: done!");
 }
 
 /**
@@ -3822,9 +3838,12 @@ void Sim::SerArmies(gpg::ReadArchive* const archive)
 
   unsigned int armyCount = 0u;
   archive->ReadUInt(&armyCount);
+  gpg::Logf("Sim::SerArmies: armyCount=%u, current mArmiesList.size()=%zu", armyCount, mArmiesList.size());
 
   for (std::size_t i = 0; i < mArmiesList.size(); ++i) {
+    gpg::Logf("Sim::SerArmies: deleting army %zu (%p)...", i, mArmiesList[i]);
     delete mArmiesList[i];
+    gpg::Logf("Sim::SerArmies: deleted army %zu", i);
   }
   mArmiesList.clear();
 
@@ -3832,10 +3851,13 @@ void Sim::SerArmies(gpg::ReadArchive* const archive)
 
   gpg::RRef nullOwner{};
   for (std::size_t i = 0; i < static_cast<std::size_t>(armyCount); ++i) {
+    gpg::Logf("Sim::SerArmies: reading army %zu...", i);
     SimArmy* loadedArmy = nullptr;
     archive->ReadPointerOwned(&loadedArmy, &nullOwner);
     mArmiesList[i] = static_cast<CArmyImpl*>(loadedArmy);
+    gpg::Logf("Sim::SerArmies: read army %zu (%p)", i, loadedArmy);
   }
+  gpg::Logf("Sim::SerArmies: finished successfully!");
 }
 
 /**
@@ -3882,7 +3904,7 @@ void Sim::SerDirtyEnts(gpg::ReadArchive* const archive)
   }
 }
 
-namespace
+namespace moho
 {
   /**
    * Address: 0x00744E50 (FUN_00744E50, sub_744E50)
@@ -3895,29 +3917,69 @@ namespace
    * `table` until a nil-key sentinel is read. Used to restore the sim's Lua
    * globals table at the end of the load-serialization pass. `table` is taken by
    * value (an owned copy destroyed on return), matching the binary.
+   * Prunes post-snapshot dirty variables.
    */
   void ReadLuaTableEntriesFromArchive(gpg::ReadArchive* const archive, LuaPlus::LuaObject table)
   {
+    if (!archive) {
+      return;
+    }
+
     gpg::RType* luaObjectType = LuaPlus::LuaObject::sType;
     if (!luaObjectType) {
       luaObjectType = gpg::LookupRType(typeid(LuaPlus::LuaObject));
       LuaPlus::LuaObject::sType = luaObjectType;
     }
 
+    gpg::RRef ownerRef{};
+    if (table.m_state) {
+      ownerRef = gpg::MakeRRef<lua_State>(table.m_state->GetCState());
+    }
+
+    std::unordered_set<std::string> restoredKeys;
+    size_t count = 0;
     while (true) {
       LuaPlus::LuaObject key;
-      gpg::RRef keyRef{};
-      archive->Read(luaObjectType, &key, keyRef);
+      archive->Read(luaObjectType, &key, ownerRef);
       if (key.IsNil()) {
         break;
       }
 
+      if (key.IsString()) {
+        const char* const keyStr = key.GetString();
+        if (keyStr) {
+          restoredKeys.emplace(keyStr);
+        }
+      }
+
       LuaPlus::LuaObject value;
-      gpg::RRef valueRef{};
-      archive->Read(luaObjectType, &value, valueRef);
+      archive->Read(luaObjectType, &value, ownerRef);
       table.SetObject(key, value);
+      ++count;
+    }
+
+    // Prune dirty post-snapshot global variables (excluding C functions)
+    std::vector<std::string> keysToPrune;
+    for (LuaPlus::LuaTableIterator iter(table, 1); !iter.m_isDone; iter.Next()) {
+      if (iter.m_keyObj.IsString()) {
+        const char* const keyStr = iter.m_keyObj.GetString();
+        if (keyStr && restoredKeys.find(keyStr) == restoredKeys.end()) {
+          if (!iter.m_valueObj.IsCFunction()) {
+            keysToPrune.emplace_back(keyStr);
+          }
+        }
+      }
+    }
+
+    for (const std::string& key : keysToPrune) {
+      gpg::Logf("ReadLuaTableEntriesFromArchive: pruning dirty key '%s'", key.c_str());
+      table.SetNil(key.c_str());
     }
   }
+} // namespace moho
+
+namespace
+{
 
   /**
    * Address: 0x007551C0 (the save half, nine `PreCreatedPtr` calls at
@@ -3963,6 +4025,7 @@ namespace
  */
 void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
 {
+  gpg::Logf("Sim::SerializeLoadBody: entered");
   if (!archive) {
     return;
   }
@@ -3974,8 +4037,10 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
     (void)archive->TrackPointer(root);
   }
 
+  gpg::Logf("Sim::SerializeLoadBody: Step 1 (ResetSyncTable & SerMapData)...");
   (void)SCR_LuaDoString("ResetSyncTable()", mLuaState);
   SerMapData(archive);
+  gpg::Logf("Sim::SerializeLoadBody: Step 2 (Basics & OGrid)...");
   archive->ReadUInt(&mCurTick);
 
   CRandomStream* random = nullptr;
@@ -3988,6 +4053,7 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
   // The grid is constructed with this Sim; its serializer registers that
   // existing instance rather than constructing a replacement pointer.
   archive->Read(gpg::RTypeOf<COGrid>(), mOGrid, ownerRef);
+  gpg::Logf("Sim::SerializeLoadBody: Step 3 (FormationDB & SimResources)...");
   IAiFormationDB* formation = nullptr;
   archive->ReadPointerOwned(&formation, &ownerRef);
   delete std::exchange(mFormationDB, static_cast<CAiFormationDBImpl*>(formation));
@@ -3997,7 +4063,9 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
     archive->ReadPointerShared(&resources, &ownerRef);
     mSimResources.reset_from_owner(boost::static_pointer_cast<CSimResources>(resources));
   }
+  gpg::Logf("Sim::SerializeLoadBody: Step 4 (Armies)...");
   SerArmies(archive);
+  gpg::Logf("Sim::SerializeLoadBody: Step 5 (CommandDB, Decals, Effects, Sound)...");
 
   CCommandDB* commands = nullptr;
   archive->ReadPointerOwned(&commands, &ownerRef);
@@ -4017,6 +4085,7 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
   archive->ReadPointerOwned(&sound, &ownerRef);
   delete std::exchange(mSoundManager, static_cast<CSimSoundManager*>(sound));
 
+  gpg::Logf("Sim::SerializeLoadBody: Step 6 (TaskStages, Vars, Shields)...");
   archive->Read(gpg::RTypeOf<CTaskStage>(), &mTaskStageA, ownerRef);
   archive->Read(gpg::RTypeOf<CTaskStage>(), &mDiskWatcherTaskStage, ownerRef);
   archive->Read(gpg::RTypeOf<CTaskStage>(), &mTaskStageB, ownerRef);
@@ -4026,12 +4095,17 @@ void Sim::SerializeLoadBody(gpg::ReadArchive* archive)
   archive->ReadBool(&mCheatsEnabled);
   archive->ReadBool(&mGameOver);
 
+  gpg::Logf("Sim::SerializeLoadBody: Step 7 (EntityDB)...");
   EntityDB* entities = nullptr;
   archive->ReadPointerOwned(&entities, &ownerRef);
   delete std::exchange(mEntityDB, entities);
+  gpg::Logf("Sim::SerializeLoadBody: Step 8 (CClosure track)...");
+  TrackLuaCClosures(archive);
+  gpg::Logf("Sim::SerializeLoadBody: Step 8 (Lua Globals)...");
 
   LuaPlus::LuaObject globals = mLuaState->GetGlobals();
   ReadLuaTableEntriesFromArchive(archive, globals);
+  gpg::Logf("Sim::SerializeLoadBody: Lua globals done");
 }
 
 /**
@@ -4129,10 +4203,92 @@ void Sim::SerVars(gpg::ReadArchive* const archive)
  * What it does:
  * Core Sim save-serialization routine used by Sim serializer callback.
  */
+void Sim::PreTrackLuaCClosures(gpg::WriteArchive* const archive)
+{
+  if (!archive || !mLuaState) {
+    return;
+  }
+  lua_State* const mainState = mLuaState->GetCState();
+  EnumerateLuaCClosures(mainState, [archive](CClosure* const cclosure) {
+    (void)archive->PreCreatedPtr(gpg::MakeRRef(cclosure));
+  });
+}
+
+void Sim::TrackLuaCClosures(gpg::ReadArchive* const archive)
+{
+  if (!archive || !mLuaState) {
+    return;
+  }
+  lua_State* const mainState = mLuaState->GetCState();
+  EnumerateLuaCClosures(mainState, [archive](CClosure* const cclosure) {
+    (void)archive->TrackPointer(gpg::MakeRRef(cclosure));
+  });
+}
+
+bool Sim::CanSnapshot() const
+{
+  auto checkStage = [](const CTaskStage& stage) -> bool {
+    auto* const mainEnd = reinterpret_cast<const CTaskThread*>(&stage.mThreads);
+    for (auto* node = static_cast<const CTaskThread*>(stage.mThreads.mNext); node != mainEnd;
+         node = static_cast<const CTaskThread*>(node->mNext)) {
+      for (const CTask* task = node->mTaskTop; task != nullptr; task = task->mSubtask) {
+        const auto* const luaTask = dynamic_cast<const CLuaTask*>(task);
+        if (!luaTask || !luaTask->mLuaState) {
+          continue;
+        }
+        const lua_State* const thread = luaTask->mLuaState->GetCState();
+        if (!thread) {
+          continue;
+        }
+        if (thread->nCcalls != 0) {
+          gpg::Logf("CanSnapshot: thread has nCcalls=%d, cannot snapshot", thread->nCcalls);
+          return false;
+        }
+        if (thread->openupval != nullptr) {
+          gpg::Logf("CanSnapshot: thread has open upvalues, cannot snapshot");
+          return false;
+        }
+      }
+    }
+
+    auto* const stagedEnd = reinterpret_cast<const CTaskThread*>(&stage.mStagedThreads);
+    for (auto* node = static_cast<const CTaskThread*>(stage.mStagedThreads.mNext); node != stagedEnd;
+         node = static_cast<const CTaskThread*>(node->mNext)) {
+      for (const CTask* task = node->mTaskTop; task != nullptr; task = task->mSubtask) {
+        const auto* const luaTask = dynamic_cast<const CLuaTask*>(task);
+        if (!luaTask || !luaTask->mLuaState) {
+          continue;
+        }
+        const lua_State* const thread = luaTask->mLuaState->GetCState();
+        if (!thread) {
+          continue;
+        }
+        if (thread->nCcalls != 0) {
+          gpg::Logf("CanSnapshot: thread has nCcalls=%d, cannot snapshot", thread->nCcalls);
+          return false;
+        }
+        if (thread->openupval != nullptr) {
+          gpg::Logf("CanSnapshot: thread has open upvalues, cannot snapshot");
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  return checkStage(mTaskStageA)
+      && checkStage(mTaskStageB)
+      && checkStage(mDiskWatcherTaskStage);
+}
+
 void Sim::SerializeSaveBody(gpg::WriteArchive* archive)
 {
   if (!archive) {
     return;
+  }
+
+  if (!CanSnapshot()) {
+    throw gpg::SerializationError("Sim::SerializeSaveBody: cannot snapshot - Lua threads have active C calls or open upvalues");
   }
 
   const gpg::RRef ownerRef{};
@@ -4142,33 +4298,44 @@ void Sim::SerializeSaveBody(gpg::WriteArchive* archive)
     (void)archive->PreCreatedPtr(root);
   }
 
+  gpg::Logf("Sim::MemberSerialize: Step 1 (ResetSyncTable & MapData)...");
   (void)SCR_LuaDoString("ResetSyncTable()", mLuaState);
   SerMapData(archive);
+  gpg::Logf("Sim::MemberSerialize: Step 2 (Basics & OGrid)...");
   archive->WriteUInt(mCurTick);
   archive->WritePointer(mRngState, gpg::TrackedPointerState::Owned, ownerRef);
   archive->WritePointer(mPhysConstants, gpg::TrackedPointerState::Owned, ownerRef);
   archive->Write(gpg::RTypeOf<COGrid>(), mOGrid, ownerRef);
+  gpg::Logf("Sim::MemberSerialize: Step 3 (FormationDB & SimResources)...");
   archive->WritePointer(static_cast<IAiFormationDB*>(mFormationDB), gpg::TrackedPointerState::Owned, ownerRef);
   archive->WritePointer(static_cast<ISimResources*>(mSimResources.px), gpg::TrackedPointerState::Shared, ownerRef);
+  gpg::Logf("Sim::MemberSerialize: Step 4 (Armies)...");
   SerArmies(archive);
+  gpg::Logf("Sim::MemberSerialize: Step 5 (CommandDB, Decals, Effects, Sound)...");
   archive->WritePointer(mCommandDB, gpg::TrackedPointerState::Owned, ownerRef);
   archive->WriteUInt(mReserved98C);
   archive->WritePointer(mDecalBuffer, gpg::TrackedPointerState::Owned, ownerRef);
   archive->WritePointer(static_cast<IEffectManager*>(mEffectManager), gpg::TrackedPointerState::Owned, ownerRef);
   archive->WritePointer(static_cast<ISoundManager*>(mSoundManager), gpg::TrackedPointerState::Owned, ownerRef);
 
+  gpg::Logf("Sim::MemberSerialize: Step 6 (TaskStages, Vars, Shields)...");
   archive->Write(gpg::RTypeOf<CTaskStage>(), &mTaskStageA, ownerRef);
   archive->Write(gpg::RTypeOf<CTaskStage>(), &mDiskWatcherTaskStage, ownerRef);
   archive->Write(gpg::RTypeOf<CTaskStage>(), &mTaskStageB, ownerRef);
   SerVars(archive);
   archive->Write(gpg::RTypeOf<decltype(mShields)>(), &mShields, ownerRef);
+  gpg::Logf("Sim::MemberSerialize: Step 7 (DirtyEnts, EntityDB)...");
   SerDirtyEnts(archive);
   archive->WriteBool(mCheatsEnabled);
   archive->WriteBool(mGameOver);
   archive->WritePointer(mEntityDB, gpg::TrackedPointerState::Owned, ownerRef);
 
+  gpg::Logf("Sim::MemberSerialize: Step 8 (CClosure pre-track)...");
+  PreTrackLuaCClosures(archive);
+  gpg::Logf("Sim::MemberSerialize: Step 8 (Lua Globals)...");
   LuaPlus::LuaObject globals = mLuaState->GetGlobals();
   (void)func_ArchiveWriteLuaObj(archive, &globals);
+  gpg::Logf("Sim::MemberSerialize: Complete!");
 }
 
 /**
@@ -6281,29 +6448,65 @@ void Sim::Setup(LaunchInfoNew* const info)
  * re-binds each loaded prop into the entity DB bounded-prop queue, then re-syncs
  * the playable rectangle and fires the `OnPostLoad` Lua callback.
  */
-void Sim::RestoreState(gpg::ReadArchive* const archive)
+void Sim::RestoreState(gpg::ReadArchive* const archive, const std::int32_t targetBeat)
 {
+  gpg::Logf("Sim::RestoreState: starting...");
   if (!archive) {
+    gpg::Logf("Sim::RestoreState: archive is null!");
     return;
   }
 
   // 1. Teardown existing task stages while all entities and armies are still alive
+  gpg::Logf("Sim::RestoreState: 1. Teardown task stages...");
   mTaskStageA.Teardown();
   mDiskWatcherTaskStage.Teardown();
   mTaskStageB.Teardown();
+  gpg::Logf("Sim::RestoreState: task stages torn down");
 
-  // 2. Unlink all entities from mCoordEntities
+  // 2. Safely destroy all living entities in mEntityDB without firing gameplay OnDestroy callbacks
+  gpg::Logf("Sim::RestoreState: 2. Destroy entities in mEntityDB (ptr=%p)...", mEntityDB);
+  if (mEntityDB != nullptr) {
+    gpg::Logf("Sim::RestoreState: mAllUnits size = %zu", mEntityDB->mAllUnits.size());
+    std::vector<Entity*> entitiesToDelete;
+    entitiesToDelete.reserve(mEntityDB->mAllUnits.size());
+    for (const auto& entry : mEntityDB->mAllUnits) {
+      if (entry.second != nullptr) {
+        entitiesToDelete.push_back(entry.second);
+      }
+    }
+    for (Entity* const entity : entitiesToDelete) {
+      delete entity;
+    }
+    mEntityDB->mAllUnits.clear();
+    mEntityDB->mEntList.clear();
+    gpg::Logf("Sim::RestoreState: all entities destroyed cleanly");
+  }
+
+  // 3. Unlink all entities from mCoordEntities
+  gpg::Logf("Sim::RestoreState: 3. Unlink mCoordEntities...");
   while (!mCoordEntities.empty()) {
     mCoordEntities.pop_front();
   }
+  gpg::Logf("Sim::RestoreState: mCoordEntities cleared");
+
+  // 4. Clear deletion queue so pre-rewind queued entities do not linger
+  gpg::Logf("Sim::RestoreState: 4. Clear deletion queue...");
+  mDeletionQueue.clear_and_release();
+
+  if (mOGrid != nullptr) {
+    gpg::Logf("Sim::RestoreState: resetting dynamic OGrid occupancy...");
+    mOGrid->ClearDynamicOccupancy();
+  }
 
   // Deserialize this Sim instance from the saved archive.
+  gpg::Logf("Sim::RestoreState: 5. Deserializing Sim instance from archive...");
   gpg::RRef ownerRef{};
   try {
     if (!Sim::sType) {
       Sim::sType = gpg::LookupRType(typeid(Sim));
     }
     archive->Read(Sim::sType, this, ownerRef);
+    gpg::Logf("Sim::RestoreState: archive->Read completed");
   } catch (const std::exception& error) {
     gpg::Warnf("Error restoring saved game state: %s", error.what());
     archive->EndSection(true);
@@ -6311,11 +6514,21 @@ void Sim::RestoreState(gpg::ReadArchive* const archive)
   }
   archive->EndSection(false);
 
-  mCurBeat = mCurTick + 1;
+  // Clear deletion queue after deserialization to discard any entities queued during teardown or deserialization
+  mDeletionQueue.clear_and_release();
+
+  if (targetBeat >= 0) {
+    mCurBeat = static_cast<std::uint32_t>(targetBeat) + 1;
+  } else {
+    mCurBeat = mCurTick + 1;
+  }
   mContext.Reset();
   for (std::uint32_t b = mCurTick + 1; b <= mCurTick + 128; ++b) {
     mSimHashes[b & 0x7Fu] = gpg::MD5Digest{};
   }
+
+  // Force full sync on the next beat so all deserialized entities are sent to CWldSession
+  mSyncFilter.focusArmy = -999;
 
   // Refresh the heightfield bounds to the full grid.
   if (mMapData && mMapData->mHeightField) {
@@ -6323,6 +6536,52 @@ void Sim::RestoreState(gpg::ReadArchive* const archive)
     const gpg::Rect2i fullBounds{0, 0, 0x7FFFFFFF, 0x7FFFFFFF};
     heightField->UpdateBounds(fullBounds);
   }
+
+  gpg::Logf("Sim::RestoreState: 6. Re-arming unit intel handles...");
+  // Walk every loaded unit: re-arm its intel handles (AddViz) and re-bind any
+  // prop entity into the entity DB bounded-prop priority queue.
+  for (CUnitIterAllArmies iter(this); iter.mItr != iter.mEnd; iter.Next()) {
+    auto* const entity = static_cast<Entity*>(iter.mCur);
+    if (!entity) {
+      continue;
+    }
+
+    if (CIntel* const intel = entity->mIntelManager; intel != nullptr) {
+      for (const IntelHandle& handle : intel->mIntelHandles) {
+        if (handle) {
+          handle->AddViz();
+        }
+      }
+    }
+
+    if (Prop* const prop = entity->IsProp(); prop != nullptr && prop->mHandleIndex != -1) {
+      prop->mHandleIndex = mEntityDB->AddBoundedProp(prop);
+    }
+  }
+
+  gpg::Logf("Sim::RestoreState: 7. SyncPlayableRect...");
+  // Re-sync the playable rectangle through /lua/SimSync.lua::SyncPlayableRect.
+  {
+    const LuaPlus::LuaObject simSyncModule = SCR_Import(mLuaState, "/lua/SimSync.lua");
+    const LuaPlus::LuaFunction<> syncPlayableRect(simSyncModule["SyncPlayableRect"]);
+    try {
+      const gpg::Rect2i playableRect = mMapData->mPlayableRect;
+      const LuaPlus::LuaObject rectObject = SCR_ToLua<gpg::Rect2<int>>(mLuaState, playableRect);
+      syncPlayableRect.Call_Object(rectObject);
+    } catch (const msvc8::runtime_error& error) {
+      gpg::Warnf("Error running SyncPlayableRect in /lua/SimSync.lua: %s", error.what());
+    }
+  }
+
+  gpg::Logf("Sim::RestoreState: 8. OnPostLoad...");
+  // Fire the OnPostLoad Lua callback; lookup and call are guarded
+  try {
+    const LuaPlus::LuaFunction<> onPostLoad(mLuaState->GetGlobal("OnPostLoad"));
+    onPostLoad.Call();
+  } catch (const std::exception& error) {
+    gpg::Warnf("OnPostLoad() failed: %s", error.what());
+  }
+  gpg::Logf("Sim::RestoreState: finished successfully!");
 }
 
 void Sim::Load(LaunchInfoLoad* const loadInfo)
@@ -10023,12 +10282,18 @@ void Sim::Shutdown()
  */
 void Sim::SaveState(gpg::WriteArchive* const archive)
 {
-  // No handler here: a script error, or a module without IsOpEnded (the
-  // LuaFunction constructor raises that), reaches the caller like the throw.
-  const LuaPlus::LuaObject cinematics = SCR_Import(mLuaState, "/lua/cinematics.lua");
-  const LuaPlus::LuaFunction<bool> isOpEnded{cinematics["IsOpEnded"]};
-  if (isOpEnded.Call_x_Bool()) {
-    throw std::runtime_error("Attemped Save in NIS mode");
+  // Safely check NIS-state save gate when cinematics module is present.
+  if (mLuaState != nullptr) {
+    const LuaPlus::LuaObject cinematics = SCR_Import(mLuaState, "/lua/cinematics.lua");
+    if (cinematics.IsTable()) {
+      const LuaPlus::LuaObject isOpEndedObj = cinematics["IsOpEnded"];
+      if (isOpEndedObj.IsFunction()) {
+        const LuaPlus::LuaFunction<bool> isOpEnded{isOpEndedObj};
+        if (isOpEnded.Call_x_Bool()) {
+          throw std::runtime_error("Attempted Save in NIS mode");
+        }
+      }
+    }
   }
 
   gpg::RRef ownerRef{};

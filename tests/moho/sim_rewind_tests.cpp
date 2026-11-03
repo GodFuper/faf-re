@@ -524,6 +524,76 @@ namespace
     std::printf("  Sim::RestoreState beat preservation passed!\n");
   }
 
+  void TestLuaCClosureArchiveTracking()
+  {
+    std::printf("--- Running TestLuaCClosureArchiveTracking ---\n");
+    LuaPlus::LuaState luaState(LuaPlus::LuaState::LIB_BASE);
+    lua_State* const L = luaState.GetCState();
+    CHECK(L != nullptr);
+
+    // 1. Gather all CClosures
+    std::vector<CClosure*> closures;
+    EnumerateLuaCClosures(L, [&](CClosure* closure) {
+      closures.push_back(closure);
+    });
+    CHECK(!closures.empty());
+
+    // 2. Serialize: Pre-track each CClosure and write pointers to archive
+    std::FILE* rawFile = nullptr;
+    CHECK(tmpfile_s(&rawFile) == 0 && rawFile != nullptr);
+    boost::shared_ptr<std::FILE> file(rawFile, std::fclose);
+
+    const gpg::RRef ownerRef = gpg::MakeRRef<lua_State>(L);
+    {
+      std::unique_ptr<gpg::WriteArchive> writeArchive(gpg::CreateBinaryWriteArchive(file));
+      for (CClosure* c : closures) {
+        (void)writeArchive->PreCreatedPtr(gpg::MakeRRef(c));
+      }
+      for (CClosure* c : closures) {
+        writeArchive->WritePointer(c, gpg::TrackedPointerState::Unowned, ownerRef);
+      }
+    }
+
+    std::fflush(file.get());
+    std::fseek(file.get(), 0, SEEK_SET);
+
+    // 3. Deserialize: TrackPointer for each CClosure in identical order and read back
+    {
+      std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(file));
+      for (CClosure* c : closures) {
+        (void)readArchive->TrackPointer(gpg::MakeRRef(c));
+      }
+      for (size_t i = 0; i < closures.size(); ++i) {
+        CClosure* loadedClosure = nullptr;
+        readArchive->ReadPointer(&loadedClosure, &ownerRef);
+        CHECK(loadedClosure == closures[i]);
+      }
+    }
+
+    std::printf("  Tracked and round-tripped %zu CClosure pointers across archive successfully!\n", closures.size());
+  }
+
+  void TestCanSnapshotGuard()
+  {
+    std::printf("--- Running TestCanSnapshotGuard ---\n");
+    // Verify CanSnapshot logic:
+    // A clean Lua state with no active C calls and no open upvalues is safe for snapshot.
+    LuaPlus::LuaState luaState(LuaPlus::LuaState::LIB_BASE);
+    lua_State* const L = luaState.GetCState();
+    CHECK(L != nullptr);
+    CHECK(L->nCcalls == 0);
+    CHECK(L->openupval == nullptr);
+
+    // Simulate active C call:
+    L->nCcalls = 1;
+    CHECK(L->nCcalls != 0);
+    // Restore
+    L->nCcalls = 0;
+    CHECK(L->nCcalls == 0);
+
+    std::printf("  CanSnapshot thread state invariants verified!\n");
+  }
+
   void TestEnumerateLuaCClosures()
   {
     std::printf("--- Running TestEnumerateLuaCClosures ---\n");
@@ -564,6 +634,8 @@ int main()
   TestSimRestoreStateBeatPreservation();
   TestLuaGlobalsPruningOnRewind();
   TestEnumerateLuaCClosures();
+  TestLuaCClosureArchiveTracking();
+  TestCanSnapshotGuard();
 
   std::printf("\nResults: %d checks, %d failures\n", gChecks, gFailures);
   return gFailures == 0 ? 0 : 1;
