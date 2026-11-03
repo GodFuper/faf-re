@@ -687,6 +687,140 @@ namespace
     std::printf("  Replay snapshot retry and lastPeriodicBeat header verification passed!\n");
   }
 
+  void TestLuaGlobalsFullRoundTrip()
+  {
+    std::printf("--- Running TestLuaGlobalsFullRoundTrip ---\n");
+
+    LuaPlus::LuaState luaState(LuaPlus::LuaState::LIB_BASE);
+    lua_State* const L = luaState.GetCState();
+    CHECK(L != nullptr);
+
+    // Setup serialization lookup tables
+    CHECK(moho::SCR_LuaDoString(
+      "__serialize_name_for_object = {}\n"
+      "__serialize_object_for_name = {}\n"
+      "local function register(obj, name)\n"
+      "  __serialize_name_for_object[obj] = name\n"
+      "  __serialize_object_for_name[name] = obj\n"
+      "end\n"
+      "local function scan(tbl, prefix)\n"
+      "  for k, v in pairs(tbl) do\n"
+      "    local t = type(v)\n"
+      "    if t == 'function' or t == 'cfunction' or t == 'table' then\n"
+      "      local name = prefix and (prefix .. '.' .. tostring(k)) or tostring(k)\n"
+      "      if not __serialize_name_for_object[v] then\n"
+      "        register(v, name)\n"
+      "        if t == 'table' and v ~= _G and v ~= __serialize_name_for_object and v ~= __serialize_object_for_name then\n"
+      "          scan(v, name)\n"
+      "        end\n"
+      "      end\n"
+      "    end\n"
+      "  end\n"
+      "end\n"
+      "register(_G, '_G')\n"
+      "scan(_G, nil)\n",
+      &luaState
+    ));
+
+    LuaPlus::LuaObject globals = luaState.GetGlobals();
+
+    // 1. Populate various Lua types
+    globals.SetString("Greeting", "Hello FAF");
+    globals.SetInteger("Score", 1337);
+    globals.SetNumber("PiVal", 3.14159);
+    globals.SetBoolean("Active", true);
+
+    CHECK(moho::SCR_LuaDoString(
+      "ComplexTable = {\n"
+      "  sub = { value = 42, name = 'inner' },\n"
+      "  items = { 10, 20, 30 }\n"
+      "}\n"
+      "function MultiplyByTwo(val)\n"
+      "  return val * 2\n"
+      "end\n",
+      &luaState
+    ));
+
+    // Verify initial function works
+    CHECK(moho::SCR_LuaDoString("test_result = MultiplyByTwo(21)", &luaState));
+    CHECK(globals.GetByName("test_result").GetInteger() == 42);
+
+    // Collect all CClosures
+    std::vector<CClosure*> closures;
+    EnumerateLuaCClosures(L, [&](CClosure* c) {
+      closures.push_back(c);
+    });
+    CHECK(!closures.empty());
+
+    // 2. Serialize
+    std::FILE* rawFile = nullptr;
+    CHECK(tmpfile_s(&rawFile) == 0 && rawFile != nullptr);
+    boost::shared_ptr<std::FILE> file(rawFile, std::fclose);
+
+    {
+      std::unique_ptr<gpg::WriteArchive> writeArchive(gpg::CreateBinaryWriteArchive(file));
+      (void)writeArchive->PreCreatedPtr(gpg::MakeRRef<lua_State>(L));
+      (void)writeArchive->PreCreatedPtr(gpg::MakeRRef<LuaPlus::LuaState>(&luaState));
+      for (CClosure* c : closures) {
+        (void)writeArchive->PreCreatedPtr(gpg::MakeRRef(c));
+      }
+      moho::func_ArchiveWriteLuaObj(writeArchive.get(), &globals);
+    }
+
+    std::fflush(file.get());
+    std::fseek(file.get(), 0, SEEK_SET);
+
+    // 3. Mutate/corrupt state before load
+    globals.SetString("Greeting", "corrupted");
+    globals.SetInteger("Score", 0);
+    globals.SetBoolean("Active", false);
+    CHECK(moho::SCR_LuaDoString("ComplexTable = nil; MultiplyByTwo = nil; test_result = nil", &luaState));
+    CHECK(globals.GetByName("ComplexTable").IsNil());
+    CHECK(globals.GetByName("MultiplyByTwo").IsNil());
+
+    // 4. Deserialize
+    {
+      std::unique_ptr<gpg::ReadArchive> readArchive(gpg::CreateBinaryReadArchive(file));
+      (void)readArchive->TrackPointer(gpg::MakeRRef<lua_State>(L));
+      (void)readArchive->TrackPointer(gpg::MakeRRef<LuaPlus::LuaState>(&luaState));
+      for (CClosure* c : closures) {
+        (void)readArchive->TrackPointer(gpg::MakeRRef(c));
+      }
+      moho::ReadLuaTableEntriesFromArchive(readArchive.get(), globals);
+    }
+
+    // 5. Assert restored values
+    CHECK(std::strcmp(globals.GetByName("Greeting").GetString(), "Hello FAF") == 0);
+    CHECK(globals.GetByName("Score").GetInteger() == 1337);
+    CHECK(std::abs(globals.GetByName("PiVal").GetNumber() - 3.14159) < 1e-4);
+    CHECK(globals.GetByName("Active").GetBoolean() == true);
+
+    LuaPlus::LuaObject restoredComplex = globals.GetByName("ComplexTable");
+    CHECK(restoredComplex.IsTable());
+    LuaPlus::LuaObject restoredSub = restoredComplex.GetByName("sub");
+    CHECK(restoredSub.IsTable());
+    CHECK(restoredSub.GetByName("value").GetInteger() == 42);
+    CHECK(std::strcmp(restoredSub.GetByName("name").GetString(), "inner") == 0);
+
+    LuaPlus::LuaObject restoredItems = restoredComplex.GetByName("items");
+    CHECK(restoredItems.IsTable());
+    CHECK(restoredItems.GetByIndex(1).GetInteger() == 10);
+    CHECK(restoredItems.GetByIndex(2).GetInteger() == 20);
+    CHECK(restoredItems.GetByIndex(3).GetInteger() == 30);
+
+    // Execute restored function
+    CHECK(globals.GetByName("MultiplyByTwo").IsFunction());
+    CHECK(moho::SCR_LuaDoString("test_result_restored = MultiplyByTwo(50)", &luaState));
+    CHECK(globals.GetByName("test_result_restored").GetInteger() == 100);
+
+    // Verify standard C-functions still valid
+    LuaPlus::LuaObject assertFn = globals.GetByName("assert");
+    CHECK(assertFn.IsFunction());
+    CHECK(assertFn.IsCFunction());
+
+    std::printf("  Lua globals full round-trip parity verified!\n");
+  }
+
 } // namespace
 
 int main()
@@ -711,6 +845,7 @@ int main()
   TestLuaCClosureArchiveTracking();
   TestCanSnapshotGuard();
   TestReplaySnapshotSchedulingAndRetry();
+  TestLuaGlobalsFullRoundTrip();
 
   std::printf("\nResults: %d checks, %d failures\n", gChecks, gFailures);
   return gFailures == 0 ? 0 : 1;
