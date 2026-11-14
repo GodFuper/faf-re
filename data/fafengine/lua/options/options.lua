@@ -823,3 +823,21 @@ do
         })
     end
 end
+
+-- Allow switching language on the fly without game restart
+do
+    local ui = options and options.ui
+    if ui and ui.items then
+        for _, item in ui.items do
+            if item.key == 'selectedlanguage' then
+                item.restart = nil
+                item.set = function(key, value, startup)
+                    if not startup and value and value ~= '' and value ~= __language then
+                        language(value)
+                    end
+                end
+                break
+            end
+        end
+    end
+end
