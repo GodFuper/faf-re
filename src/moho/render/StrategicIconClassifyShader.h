@@ -57,7 +57,8 @@ namespace moho
     std::int32_t mUnderlaySlotOrNone = -1;  ///< atlas slot of the identified underlay, -1 for none
     std::int32_t mLastFocusDamageTick = 0;  ///< `mLastFocusDamageGameTick`
     std::uint32_t mHoveredIconSlots = 0xFFFFFFFFU; ///< the hovered icon (low 16 bits) and hovered selected icon (high)
-    std::uint32_t mUnused[2] = {};
+    std::uint32_t mHealthShield = 0x0000FFFFU;     ///< low 16 bits: health (unorm16), high 16 bits: shield (unorm16)
+    std::uint32_t mUnused = 0U;
   };
   static_assert(sizeof(StrategicIconSourceRecord) == 64, "StrategicIconSourceRecord must match IconSource");
 
@@ -149,7 +150,8 @@ struct IconSource
     int underlaySlot;   // -1: none
     int lastFocusDamageTick;
     uint hoveredIconSlots; // hovered icon (low), hovered selected icon (high)
-    uint2 unused;
+    uint healthShield;     // health ratio (low 16 bits, unorm), shield ratio (high 16 bits, unorm)
+    uint unused;
 };
 
 struct IconInstance
@@ -287,7 +289,7 @@ void ClassifyIconsCS(uint3 thread : SV_DispatchThreadID)
     record.color = 0u;
     record.layers01 = 0xFFFFFFFFu;
     record.layers23 = 0xFFFFFFFFu;
-    record.healthShield = 0x0000FFFFu;
+    record.healthShield = source.healthShield;
     bool blinkedOut = false;
     if ((source.flags & kFriendly) != 0u && source.lastFocusDamageTick != 0 && (FrameFlags & kBlinkHidden) != 0u)
     {

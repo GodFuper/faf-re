@@ -163,6 +163,37 @@ namespace moho
     }
     config.mSmartCutoff = ui_StrategicIconHpOutlineSmartCutoff;
     config.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
+
+    const int palette = ui_StrategicIconHpOutlinePalette;
+    if (palette >= 0 && palette <= 3) {
+      switch (palette) {
+        case 1: // Neon
+          config.mColorGood = 0xFF00FF66u;
+          config.mColorMed  = 0xFFFFD700u;
+          config.mColorBad  = 0xFFFF0033u;
+          config.mColorShield = 0xFF00E5FFu;
+          break;
+        case 2: // Deuteranopia / Protanopia
+          config.mColorGood = 0xFF3B82F6u;
+          config.mColorMed  = 0xFFF59E0Bu;
+          config.mColorBad  = 0xFFF43F5Eu;
+          config.mColorShield = 0xFF06B6D4u;
+          break;
+        case 3: // Tritanopia
+          config.mColorGood = 0xFF10B981u;
+          config.mColorMed  = 0xFFEC4899u;
+          config.mColorBad  = 0xFFEF4444u;
+          config.mColorShield = 0xFF00C8FFu;
+          break;
+        case 0: // Classic / Default
+        default:
+          config.mColorGood = 0xFF22C55Eu;
+          config.mColorMed  = 0xFFEAB308u;
+          config.mColorBad  = 0xFFEF4444u;
+          config.mColorShield = 0xFF00C8FFu;
+          break;
+      }
+    }
     return config;
   }
 
@@ -2361,18 +2392,20 @@ namespace moho
           const StrategicIconInstance& a = expected[i];
           const StrategicIconInstance& b = drawn[i];
           gpg::Warnf(
-            "icon GPU check (%s): record %zu differs: cpu {pos %08X color %08X layers %08X %08X} gpu {pos %08X color "
-            "%08X layers %08X %08X}",
+            "icon GPU check (%s): record %zu differs: cpu {pos %08X color %08X layers %08X %08X hs %08X} gpu {pos %08X color "
+            "%08X layers %08X %08X hs %08X}",
             miniMap ? "minimap" : "view",
             i,
             a.mPosition,
             a.mColor,
             a.mLayers01,
             a.mLayers23,
+            a.mHealthShield,
             b.mPosition,
             b.mColor,
             b.mLayers01,
-            b.mLayers23
+            b.mLayers23,
+            b.mHealthShield
           );
         }
       }
@@ -2772,6 +2805,17 @@ namespace moho
         }
         record.mColor = iconColor;
         record.mLastFocusDamageTick = entity->mLastFocusDamageGameTick;
+
+        float shieldRatio = 0.0f;
+        if (asUnit != nullptr) {
+          shieldRatio = asUnit->mUnitVarDat.mShieldRatio;
+        }
+        record.mHealthShield = StrategicIconInstance::PackHealthAndShield(
+          entity->mVariableData.mHealth,
+          entity->mVariableData.mMaxHealth,
+          shieldRatio,
+          source.Has(StrategicIconSource::kFriendly)
+        );
 
         const auto findSlot = [this](const std::shared_ptr<CD3DBatchTexture>* const texture) -> std::uint32_t {
           return (texture != nullptr && *texture) ? gpuIcons.FindSlot(texture->get()) : StrategicIconInstance::kNoLayer;

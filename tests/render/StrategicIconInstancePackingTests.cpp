@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include "moho/render/StrategicIconClassifyShader.h"
 #include "moho/render/StrategicIconRenderer.h"
 
 namespace moho
@@ -9,6 +11,15 @@ namespace moho
 TEST(StrategicIconInstancePackingTest, StructSizeIs20Bytes)
 {
   EXPECT_EQ(sizeof(StrategicIconInstance), 20u);
+}
+
+TEST(StrategicIconInstancePackingTest, SourceRecordSizeIs64BytesAndHasHealthShield)
+{
+  EXPECT_EQ(sizeof(StrategicIconSourceRecord), 64u);
+  StrategicIconSourceRecord record{};
+  EXPECT_EQ(record.mHealthShield, 0x0000FFFFu);
+  EXPECT_EQ(record.mUnused, 0u);
+  EXPECT_EQ(offsetof(StrategicIconSourceRecord, mHealthShield), 56u);
 }
 
 TEST(StrategicIconInstancePackingTest, ClampsZeroAndNegativeMaxHealthToFull)
