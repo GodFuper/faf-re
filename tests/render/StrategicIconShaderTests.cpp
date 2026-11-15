@@ -14,17 +14,49 @@ TEST(StrategicIconShaderTest, ConstantBufferAlignmentAndInstanceStride)
   EXPECT_EQ(sizeof(DrawConstants) % 16, 0u);
   EXPECT_EQ(sizeof(DrawConstants), 112u);
   EXPECT_EQ(StrategicIconInstance::kLayerCount, 5u);
+  EXPECT_EQ(StrategicIconInstance::kOutlineDisabledFlag, 0x80000000u);
 
   const DrawConstants defaults{};
   EXPECT_EQ(defaults.outlineMode, 0u);
   EXPECT_FLOAT_EQ(defaults.smartCutoff, 0.0f);
-  EXPECT_EQ(defaults.showShield, 1u);
+  EXPECT_EQ(defaults.outlineContent, 0u);
   EXPECT_FLOAT_EQ(defaults.goodCutoff, 0.65f);
   EXPECT_FLOAT_EQ(defaults.badCutoff, 0.30f);
   EXPECT_EQ(defaults.colorGood, 0xFF22C55Eu);
   EXPECT_EQ(defaults.colorMed, 0xFFEAB308u);
   EXPECT_EQ(defaults.colorBad, 0xFFEF4444u);
   EXPECT_EQ(defaults.colorShield, 0xFF00C8FFu);
+  EXPECT_EQ(defaults.outlinePlacement, 0u);
+  EXPECT_EQ(defaults.pulseEnabled, 1u);
+  EXPECT_FLOAT_EQ(defaults.animTime, 0.0f);
+}
+
+TEST(StrategicIconShaderTest, HealthShieldPacking15BitAndFlagIsolation)
+{
+  // 100% health, 100% shield, friendly
+  const std::uint32_t fullPacked = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 1.0f, true);
+  // Bit 31 must NOT be set by PackHealthAndShield
+  EXPECT_EQ(fullPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // Decoding 15-bit shield yields 1.0f
+  const float shieldFrac = float((fullPacked >> 16) & 0x7FFFu) / 32767.0f;
+  const float healthFrac = float(fullPacked & 0xFFFFu) / 65535.0f;
+  EXPECT_NEAR(shieldFrac, 1.0f, 0.0001f);
+  EXPECT_NEAR(healthFrac, 1.0f, 0.0001f);
+
+  // When kOutlineDisabledFlag is ORed, bit 31 is set while health and shield fractions remain intact
+  const std::uint32_t disabledPacked = fullPacked | StrategicIconInstance::kOutlineDisabledFlag;
+  EXPECT_NE(disabledPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+  const float disabledShieldFrac = float((disabledPacked >> 16) & 0x7FFFu) / 32767.0f;
+  const float disabledHealthFrac = float(disabledPacked & 0xFFFFu) / 65535.0f;
+  EXPECT_NEAR(disabledShieldFrac, 1.0f, 0.0001f);
+  EXPECT_NEAR(disabledHealthFrac, 1.0f, 0.0001f);
+
+  // Enemy unit binary shield (15-bit full 0x7FFF)
+  const std::uint32_t enemyActiveShield = StrategicIconInstance::PackHealthAndShield(50.0f, 100.0f, 0.5f, false);
+  EXPECT_EQ(enemyActiveShield & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+  EXPECT_NEAR(float((enemyActiveShield >> 16) & 0x7FFFu) / 32767.0f, 1.0f, 0.0001f);
+  EXPECT_NEAR(float(enemyActiveShield & 0xFFFFu) / 65535.0f, 0.5f, 0.001f);
 }
 
 TEST(StrategicIconShaderTest, ShaderSourceContainsOutlineTokens)
@@ -32,15 +64,20 @@ TEST(StrategicIconShaderTest, ShaderSourceContainsOutlineTokens)
   const std::string_view source(kStrategicIconShaderSource);
   EXPECT_NE(source.find("OutlineMode"), std::string_view::npos);
   EXPECT_NE(source.find("SmartCutoff"), std::string_view::npos);
-  EXPECT_NE(source.find("ShowShield"), std::string_view::npos);
+  EXPECT_NE(source.find("OutlineContent"), std::string_view::npos);
   EXPECT_NE(source.find("GoodCutoff"), std::string_view::npos);
   EXPECT_NE(source.find("BadCutoff"), std::string_view::npos);
   EXPECT_NE(source.find("ColorGood"), std::string_view::npos);
   EXPECT_NE(source.find("ColorMed"), std::string_view::npos);
   EXPECT_NE(source.find("ColorBad"), std::string_view::npos);
   EXPECT_NE(source.find("ColorShield"), std::string_view::npos);
+  EXPECT_NE(source.find("OutlinePlacement"), std::string_view::npos);
+  EXPECT_NE(source.find("PulseEnabled"), std::string_view::npos);
+  EXPECT_NE(source.find("AnimTime"), std::string_view::npos);
   EXPECT_NE(source.find("localPos"), std::string_view::npos);
   EXPECT_NE(source.find("healthShield"), std::string_view::npos);
+  EXPECT_NE(source.find("0x80000000u"), std::string_view::npos);
+  EXPECT_NE(source.find("32767.0"), std::string_view::npos);
 }
 
 TEST(StrategicIconShaderTest, CompilesVertexAndPixelShadersD3D11)
@@ -187,35 +224,35 @@ TEST(StrategicIconShaderTest, EndToEndGpuHealthDataPropagationIntegration)
 
   // 5. Simulate StrategicIconPS pixel shader unpack:
   const float healthFrac = float(iconRecord.mHealthShield & 0xFFFFu) / 65535.0f;
-  const float shieldFrac = float((iconRecord.mHealthShield >> 16) & 0xFFFFu) / 65535.0f;
+  const float shieldFrac = float((iconRecord.mHealthShield >> 16) & 0x7FFFu) / 32767.0f;
 
   EXPECT_NEAR(healthFrac, 0.5f, 0.001f);
   EXPECT_NEAR(shieldFrac, 0.3f, 0.001f);
 
   // 6. Verify Smart Mode Cutoff logic across all modes:
   // Smart Cutoff strictly hides HP outline when healthy, but NEVER hides shield outline:
-  // bool hideHp = (SmartCutoff > 0.0 && healthFrac >= SmartCutoff);
-  // bool hasShield = (ShowShield != 0 && shieldFrac > 0.0);
+  // bool hideHp = (!showHp || (SmartCutoff > 0.0 && healthFrac >= SmartCutoff));
+  // bool hasShield = (showShield && shieldFrac > 0.0);
   // if (hideHp && !hasShield) discard;
   const float smartCutoffDisabled = 0.0f;
   const float smartCutoff100 = 1.0f;
-  const std::uint32_t showShield = 1u;
+  const bool showShield = true;
 
   const std::uint32_t fullHpNoShieldRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 0.0f, true);
   const float fullHpFrac = float(fullHpNoShieldRecord & 0xFFFFu) / 65535.0f;
-  const float noShieldFrac = float((fullHpNoShieldRecord >> 16) & 0xFFFFu) / 65535.0f;
+  const float noShieldFrac = float((fullHpNoShieldRecord >> 16) & 0x7FFFu) / 32767.0f;
 
   const std::uint32_t fullHpFullShieldRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 1.0f, true);
-  const float fullShieldFrac = float((fullHpFullShieldRecord >> 16) & 0xFFFFu) / 65535.0f;
+  const float fullShieldFrac = float((fullHpFullShieldRecord >> 16) & 0x7FFFu) / 32767.0f;
 
   // When Cutoff is disabled (0.0), even full HP undamaged units are NOT discarded:
   const bool hideHpDisabled = (smartCutoffDisabled > 0.0f && fullHpFrac >= smartCutoffDisabled);
-  const bool hasShieldNoShield = (showShield != 0 && noShieldFrac > 0.0f);
+  const bool hasShieldNoShield = (showShield && noShieldFrac > 0.0f);
   EXPECT_FALSE(hideHpDisabled && !hasShieldNoShield);
 
   // When Cutoff is 1.0 (100%), damaged unit is NOT discarded:
   const bool hideHpDamaged = (smartCutoff100 > 0.0f && healthFrac >= smartCutoff100);
-  const bool hasShieldPartial = (showShield != 0 && shieldFrac > 0.0f);
+  const bool hasShieldPartial = (showShield && shieldFrac > 0.0f);
   EXPECT_FALSE(hideHpDamaged && !hasShieldPartial);
 
   // When Cutoff is 1.0 (100%), full HP unit with NO shield MUST be discarded:
@@ -224,7 +261,7 @@ TEST(StrategicIconShaderTest, EndToEndGpuHealthDataPropagationIntegration)
 
   // CRITICAL: When Cutoff is 1.0 (100%) and unit has 100% full shield,
   // Smart Cutoff does NOT hide the shield! Quad is preserved to render the shield outline:
-  const bool hasShieldFull = (showShield != 0 && fullShieldFrac > 0.0f);
+  const bool hasShieldFull = (showShield && fullShieldFrac > 0.0f);
   const bool fullShieldDiscarded = (hideHpFull && !hasShieldFull);
   EXPECT_FALSE(fullShieldDiscarded);
 

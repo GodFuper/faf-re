@@ -53,14 +53,16 @@ namespace moho
     VMatrix4 composite;
     std::uint32_t outlineMode = 0U;
     float smartCutoff = 0.0f;
-    std::uint32_t showShield = 1U;
+    std::uint32_t outlineContent = 0U; // 0=HP+Shield, 1=HP Only, 2=Shield Only
     float goodCutoff = 0.65f;
     float badCutoff = 0.30f;
     std::uint32_t colorGood = 0xFF22C55Eu;
     std::uint32_t colorMed  = 0xFFEAB308u;
     std::uint32_t colorBad  = 0xFFEF4444u;
     std::uint32_t colorShield = 0xFF00C8FFu;
-    std::uint32_t pad[3] = {};
+    std::uint32_t outlinePlacement = 0U; // 0=Full, 1=Top, 2=Bottom, 3=Split (Shield Top, HP Bottom)
+    std::uint32_t pulseEnabled = 1U;
+    float animTime = 0.0f;
   };
   static_assert(sizeof(DrawConstants) == 112, "DrawConstants must be 112 bytes (7 float4s)");
   static_assert(sizeof(DrawConstants) % 16 == 0, "constant blocks are whole float4s");
@@ -72,10 +74,11 @@ namespace moho
     std::uint32_t mColor = 0U;    ///< ARGB tint of the base icon
     std::uint32_t mLayers01 = 0xFFFFFFFFU;
     std::uint32_t mLayers23 = 0xFFFFFFFFU;
-    std::uint32_t mHealthShield = 0U; ///< low 16 bits: health ratio (unorm16), high 16 bits: shield ratio (unorm16)
+    std::uint32_t mHealthShield = 0U; ///< low 16 bits: health ratio (unorm16), bits 16..30: shield ratio (unorm15), bit 31: outline disabled flag
 
     static constexpr std::uint16_t kNoLayer = 0xFFFFU;
     static constexpr std::uint32_t kLayerCount = 5U; ///< underlay, base, paused, stunned, outline
+    static constexpr std::uint32_t kOutlineDisabledFlag = 0x80000000U;
 
     void SetPosition(float screenX, float screenY) noexcept;
     void SetLayer(std::uint32_t layer, std::uint16_t slot) noexcept;

@@ -55,31 +55,32 @@ TEST(StrategicIconInstancePackingTest, ClampsHealthBoundaries)
 
 TEST(StrategicIconInstancePackingTest, FriendlyShieldPreservesFractionalValue)
 {
-  // Friendly unit with damaged shield preserves fractional value
+  // Friendly unit with damaged shield preserves fractional value in 15 bits (0..32767)
   const std::uint32_t packedFriendly = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.5f, true);
   EXPECT_EQ(packedFriendly & 0xFFFFu, 0xFFFFu); // 100% health
   const std::uint32_t shieldHalf = packedFriendly >> 16;
-  EXPECT_TRUE(shieldHalf == 0x8000u || shieldHalf == 32767u);
+  EXPECT_TRUE(shieldHalf == 16383u || shieldHalf == 16384u);
 
   // Damaged shield 0.35f
   const std::uint32_t packed35 = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.35f, true);
-  const std::uint32_t expectedShield35 = static_cast<std::uint32_t>(std::round(0.35f * 65535.0f));
+  const std::uint32_t expectedShield35 = static_cast<std::uint32_t>(std::round(0.35f * 32767.0f));
   EXPECT_EQ(packed35 >> 16, expectedShield35);
-  EXPECT_NE(packed35 >> 16, 0xFFFFu);
+  EXPECT_NE(packed35 >> 16, 0x7FFFu);
   EXPECT_NE(packed35 >> 16, 0u);
 }
 
 TEST(StrategicIconInstancePackingTest, EnemyShieldIsStrictlyBinaryFogOfWar)
 {
-  // Enemy unit with damaged shield (e.g. 0.35f) returns binary full shield (0xFFFFu in high 16 bits)
+  // Enemy unit with damaged shield (e.g. 0.35f) returns binary full shield (0x7FFFu in 15 bits, leaving bit 31 clear)
   const std::uint32_t packedEnemyDamaged = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.35f, false);
   EXPECT_EQ(packedEnemyDamaged & 0xFFFFu, 0xFFFFu);   // 100% health
-  EXPECT_EQ(packedEnemyDamaged >> 16, 0xFFFFu);       // Binary full shield
-  EXPECT_EQ(packedEnemyDamaged, 0xFFFFFFFFu);
+  EXPECT_EQ(packedEnemyDamaged >> 16, 0x7FFFu);       // Binary full shield (15-bit)
+  EXPECT_EQ(packedEnemyDamaged, 0x7FFFFFFFu);
+  EXPECT_EQ(packedEnemyDamaged & StrategicIconInstance::kOutlineDisabledFlag, 0u);
 
   // Even small shield ratio > 0.0f returns binary full shield
   const std::uint32_t packedEnemyTiny = StrategicIconInstance::PackHealthAndShield(50.0f, 100.0f, 0.001f, false);
-  EXPECT_EQ(packedEnemyTiny >> 16, 0xFFFFu);
+  EXPECT_EQ(packedEnemyTiny >> 16, 0x7FFFu);
 
   // Enemy unit with depleted shield (0.0f) returns 0 shield
   const std::uint32_t packedEnemyDepleted = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.0f, false);

@@ -3,6 +3,7 @@
 #include "StrategicIconRenderer.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <optional>
@@ -29,6 +30,18 @@ namespace moho
 
   int ren_GpuIcons = -1;
   int ren_GpuIconClassify = -1;
+
+  namespace
+  {
+    [[nodiscard]] float GetIconOutlineAnimTime() noexcept
+    {
+      static const auto sStartTime = std::chrono::steady_clock::now();
+      return std::fmod(
+        std::chrono::duration<float>(std::chrono::steady_clock::now() - sStartTime).count(),
+        3600.0f
+      );
+    }
+  }
 
   TConVar<int> gTConVar_ren_GpuIcons(
     "ren_GpuIcons",
@@ -108,6 +121,16 @@ namespace moho
       return static_cast<std::uint32_t>(std::round(val * 65535.0f));
     };
 
+    const auto toUnorm15 = [](const float val) noexcept -> std::uint32_t {
+      if (std::isnan(val) || val <= 0.0f) {
+        return 0U;
+      }
+      if (val >= 1.0f) {
+        return 0x7FFFU;
+      }
+      return static_cast<std::uint32_t>(std::round(val * 32767.0f));
+    };
+
     float healthFraction = 1.0f;
     if (maxHealth > 0.0f) {
       const float ratio = health / maxHealth;
@@ -118,14 +141,14 @@ namespace moho
 
     std::uint32_t shieldPacked = 0U;
     if (isFriendly) {
-      shieldPacked = toUnorm16(shieldRatio);
+      shieldPacked = toUnorm15(shieldRatio);
     } else {
       // Enemy unit shield visibility in fog-of-war is strictly binary:
-      // if shield is active (> 0.0f), pack full 0xFFFFu, otherwise 0u.
-      shieldPacked = (!std::isnan(shieldRatio) && shieldRatio > 0.0f) ? 0xFFFFU : 0U;
+      // if shield is active (> 0.0f), pack full 0x7FFFu, otherwise 0u.
+      shieldPacked = (!std::isnan(shieldRatio) && shieldRatio > 0.0f) ? 0x7FFFU : 0U;
     }
 
-    return (shieldPacked << 16U) | (toUnorm16(healthFraction) & 0xFFFFU);
+    return ((shieldPacked & 0x7FFFU) << 16U) | (toUnorm16(healthFraction) & 0xFFFFU);
   }
 
   StrategicIconRenderer& StrategicIconRenderer::Get()
@@ -349,13 +372,16 @@ namespace moho
     const StrategicIconOutlineConfig outlineConfig = moho::GetStrategicIconOutlineConfig();
     constants.outlineMode = static_cast<std::uint32_t>(outlineConfig.mMode);
     constants.smartCutoff = outlineConfig.mSmartCutoff;
-    constants.showShield = outlineConfig.mShowShield ? 1U : 0U;
+    constants.outlineContent = outlineConfig.mShowShield ? 0U : 1U;
     constants.goodCutoff = outlineConfig.mGoodCutoff;
     constants.badCutoff = outlineConfig.mBadCutoff;
     constants.colorGood = outlineConfig.mColorGood;
     constants.colorMed = outlineConfig.mColorMed;
     constants.colorBad = outlineConfig.mColorBad;
     constants.colorShield = outlineConfig.mColorShield;
+    constants.outlinePlacement = 0U;
+    constants.pulseEnabled = 1U;
+    constants.animTime = GetIconOutlineAnimTime();
 
     gpg::gal::GpuDrawCall call{};
     call.program = mProgram.get();
@@ -518,13 +544,16 @@ namespace moho
     const StrategicIconOutlineConfig outlineConfig = moho::GetStrategicIconOutlineConfig();
     drawConstants.outlineMode = static_cast<std::uint32_t>(outlineConfig.mMode);
     drawConstants.smartCutoff = outlineConfig.mSmartCutoff;
-    drawConstants.showShield = outlineConfig.mShowShield ? 1U : 0U;
+    drawConstants.outlineContent = outlineConfig.mShowShield ? 0U : 1U;
     drawConstants.goodCutoff = outlineConfig.mGoodCutoff;
     drawConstants.badCutoff = outlineConfig.mBadCutoff;
     drawConstants.colorGood = outlineConfig.mColorGood;
     drawConstants.colorMed = outlineConfig.mColorMed;
     drawConstants.colorBad = outlineConfig.mColorBad;
     drawConstants.colorShield = outlineConfig.mColorShield;
+    drawConstants.outlinePlacement = 0U;
+    drawConstants.pulseEnabled = 1U;
+    drawConstants.animTime = GetIconOutlineAnimTime();
     gpg::gal::GpuDrawCall call{};
     call.program = mProgram.get();
     call.bindings.constants = &drawConstants;
