@@ -2,16 +2,18 @@
 
 // Engine-owned HLSL for the GPU-driven strategic icons (StrategicIconRenderer).
 //
-// One instance per icon, 24 vertices per instance: up to four screen quads
+// One instance per icon, 30 vertices per instance: up to five screen quads
 // stacked in the order the CPU path draws them (identified underlay, base
-// icon, paused overlay, stunned overlay). The vertex shader pulls the icon
-// record and the atlas slot of each layer from structured buffers and builds
-// the same corners, UVs and colours `CD3DPrimBatcher` builds on the CPU for
-// `DrawQuad` (TStrategicIcon). A layer without a texture collapses to a
-// zero-area quad. The pixel shader reproduces the TStrategicIcon pass: point
-// sample, and replace the texel's colour with the vertex colour where the texel
-// is close to mid grey; alpha from the texture; blended src-alpha/inv-src-alpha
-// into RGB only, no depth.
+// icon, paused overlay, stunned overlay, and procedural outline). The vertex
+// shader pulls the icon record and the atlas slot of each layer from structured
+// buffers and builds the same corners, UVs and colours `CD3DPrimBatcher` builds
+// on the CPU for `DrawQuad` (TStrategicIcon). Layer 4 is the procedural health
+// and shield outline. A layer without a texture (or disabled outline) collapses
+// to a zero-area quad. The pixel shader reproduces the TStrategicIcon pass for
+// layers 0..3: point sample, and replace the texel's colour with the vertex
+// colour where the texel is close to mid grey; alpha from the texture; blended
+// src-alpha/inv-src-alpha into RGB only, no depth. Layer 4 procedurally generates
+// an antialiased inner HP arc and outer shield ring.
 //
 // Bindings follow gpg/gal/GpuDriven.h (b0, t0..t3 buffers, t4 texture, s0),
 // so DXC builds the same source for D3D12 (DXIL) and Vulkan (SPIR-V).
@@ -22,6 +24,16 @@ namespace moho
 cbuffer StrategicIconConstants : register(b0)
 {
     row_major float4x4 Composite; // CD3DPrimBatcher's view * projection
+    uint OutlineMode;
+    float SmartCutoff;
+    uint ShowShield;
+    float GoodCutoff;
+    float BadCutoff;
+    uint ColorGood;
+    uint ColorMed;
+    uint ColorBad;
+    uint ColorShield;
+    float3 _Pad;
 };
 
 struct IconInstance
@@ -50,6 +62,9 @@ struct IconVertex
     float4 position : SV_Position;
     float4 color : COLOR0;
     float2 uv : TEXCOORD0;
+    float2 localPos : TEXCOORD1;
+    nointerpolation uint layer : BLENDINDICES0;
+    nointerpolation uint healthShield : BLENDINDICES1;
 };
 
 float4 UnpackArgb(uint argb)
@@ -66,21 +81,50 @@ IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_Ins
     IconInstance icon = Instances[instanceId];
     uint layer = vertexId / 6;
     uint corner = kCornerOfVertex[vertexId % 6];
+    float2 unitUv = float2(corner == 1 || corner == 2 ? 1.0 : 0.0, corner >= 2 ? 1.0 : 0.0);
+    float2 center = float2((int)(icon.position << 16) >> 16, (int)icon.position >> 16);
+
+    IconVertex output;
+    output.layer = layer;
+    output.healthShield = icon.healthShield;
+
+    if (layer == 4)
+    {
+        uint baseSlot = (icon.layers01 >> 16) & 0xFFFF;
+        if (OutlineMode == 0 || baseSlot == 0xFFFF)
+        {
+            output.position = float4(0.0, 0.0, 0.0, 1.0);
+            output.color = float4(0.0, 0.0, 0.0, 0.0);
+            output.uv = float2(0.0, 0.0);
+            output.localPos = float2(0.0, 0.0);
+            return output;
+        }
+
+        IconSlot slot = Slots[baseSlot];
+        float2 halfSize = slot.halfSize * 1.45;
+        float2 screen = float2(unitUv.x != 0.0 ? center.x + halfSize.x : center.x - halfSize.x,
+                               unitUv.y != 0.0 ? center.y + halfSize.y : center.y - halfSize.y);
+
+        output.position = mul(float4(screen, 0.0, 1.0), Composite);
+        output.color = float4(1.0, 1.0, 1.0, 1.0);
+        output.uv = float2(0.0, 0.0);
+        output.localPos = unitUv * 2.0 - 1.0;
+        return output;
+    }
+
     uint packed = layer < 2 ? icon.layers01 : icon.layers23;
     uint slotIndex = (packed >> ((layer & 1) * 16)) & 0xFFFF;
 
-    IconVertex output;
     if (slotIndex == 0xFFFF)
     {
         output.position = float4(0.0, 0.0, 0.0, 1.0);
         output.color = float4(0.0, 0.0, 0.0, 0.0);
         output.uv = float2(0.0, 0.0);
+        output.localPos = float2(0.0, 0.0);
         return output;
     }
 
     IconSlot slot = Slots[slotIndex];
-    float2 center = float2((int)(icon.position << 16) >> 16, (int)icon.position >> 16);
-    float2 unitUv = float2(corner == 1 || corner == 2 ? 1.0 : 0.0, corner >= 2 ? 1.0 : 0.0);
     float2 halfSize = slot.halfSize;
     float2 screen = float2(unitUv.x != 0.0 ? center.x + halfSize.x : center.x - halfSize.x,
                            unitUv.y != 0.0 ? center.y + halfSize.y : center.y - halfSize.y);
@@ -89,18 +133,100 @@ IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_Ins
     // Only the base icon (layer 1) is tinted; the others draw at 0xFFFFFFFF.
     output.color = UnpackArgb(layer == 1 ? icon.color : 0xFFFFFFFF);
     output.uv = slot.uv.xy + slot.uv.zw * unitUv;
+    output.localPos = unitUv * 2.0 - 1.0;
     return output;
 }
 
 float4 StrategicIconPS(IconVertex input) : SV_Target
 {
-    float4 color = Atlas.Sample(PointSampler, input.uv);
-    float3 d = (color.rgb - float3(0.5, 0.5, 0.5)) * (color.rgb - float3(0.5, 0.5, 0.5));
-    if (dot(d, float3(1.0, 1.0, 1.0)) < 0.25)
+    if (input.layer < 4)
     {
-        color.rgb = input.color.rgb;
+        float4 color = Atlas.Sample(PointSampler, input.uv);
+        float3 d = (color.rgb - float3(0.5, 0.5, 0.5)) * (color.rgb - float3(0.5, 0.5, 0.5));
+        if (dot(d, float3(1.0, 1.0, 1.0)) < 0.25)
+        {
+            color.rgb = input.color.rgb;
+        }
+        return color;
     }
-    return color;
+
+    // Layer 4: Procedural HP and Shield outline
+    if (OutlineMode == 0)
+    {
+        discard;
+    }
+
+    float healthFrac = float(input.healthShield & 0xFFFF) / 65535.0;
+    float shieldFrac = float((input.healthShield >> 16) & 0xFFFF) / 65535.0;
+
+    // Smart mode check: hide outline if healthy and shield is not damaged
+    if (OutlineMode == 3 && healthFrac >= SmartCutoff && (shieldFrac >= 1.0 || shieldFrac <= 0.0))
+    {
+        discard;
+    }
+
+    float r = length(input.localPos);
+    if (r > 1.05 || r < 0.55)
+    {
+        discard;
+    }
+
+    // Angle starting at 12 o'clock (0.0) sweeping clockwise to 1.0
+    float angle = atan2(input.localPos.x, -input.localPos.y);
+    if (angle < 0.0)
+    {
+        angle += 6.28318530718;
+    }
+    float normAngle = angle / 6.28318530718;
+
+    float dr = max(fwidth(r) * 1.5, 0.005);
+
+    // Inner band (r in [0.60, 0.85]): HP outline
+    float hpRadial = smoothstep(0.60 - dr, 0.60 + dr, r) * (1.0 - smoothstep(0.85 - dr, 0.85 + dr, r));
+    float hpAngleAlpha = 0.0;
+    if (OutlineMode == 1)
+    {
+        hpAngleAlpha = 1.0;
+    }
+    else if (OutlineMode == 2 || OutlineMode == 3)
+    {
+        if (OutlineMode == 3 && healthFrac >= SmartCutoff)
+        {
+            hpAngleAlpha = 0.0;
+        }
+        else
+        {
+            hpAngleAlpha = normAngle <= healthFrac ? 1.0 : 0.0;
+        }
+    }
+    float hpAlpha = hpRadial * hpAngleAlpha;
+
+    // HP color smoothly interpolated from ColorBad to ColorMed to ColorGood
+    float4 cBad = UnpackArgb(ColorBad);
+    float4 cMed = UnpackArgb(ColorMed);
+    float4 cGood = UnpackArgb(ColorGood);
+    float denom = max(GoodCutoff - BadCutoff, 0.001);
+    float t = saturate((healthFrac - BadCutoff) / denom);
+    float4 hpColor = t < 0.5 ? lerp(cBad, cMed, t * 2.0) : lerp(cMed, cGood, (t - 0.5) * 2.0);
+
+    // Outer band (r in [0.85, 1.00]): Shield outline
+    float shieldAlpha = 0.0;
+    float4 shieldColor = UnpackArgb(ColorShield);
+    if (ShowShield != 0 && shieldFrac > 0.0)
+    {
+        float shieldRadial = smoothstep(0.85 - dr, 0.85 + dr, r) * (1.0 - smoothstep(1.00 - dr, 1.00 + dr, r));
+        float shieldAngleAlpha = normAngle <= shieldFrac ? 1.0 : 0.0;
+        shieldAlpha = shieldRadial * shieldAngleAlpha;
+    }
+
+    float totalAlpha = saturate(hpAlpha + shieldAlpha);
+    if (totalAlpha < 0.01)
+    {
+        discard;
+    }
+
+    float3 rgb = (hpColor.rgb * hpAlpha + shieldColor.rgb * shieldAlpha) / max(hpAlpha + shieldAlpha, 0.0001);
+    return float4(rgb, totalAlpha);
 }
 )hlsl";
 } // namespace moho

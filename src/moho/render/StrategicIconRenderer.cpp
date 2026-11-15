@@ -18,6 +18,7 @@
 #include "moho/render/GpuPathSettings.h"
 #include "moho/render/StrategicIconClassifyShader.h"
 #include "moho/render/StrategicIconShader.h"
+#include "moho/sim/CWldSession.h"
 #include "moho/render/d3d/CD3DPrimBatcher.h"
 #include "moho/render/d3d/CD3DTextureBatcher.h"
 #include "moho/render/textures/CD3DBatchTexture.h"
@@ -59,12 +60,6 @@ namespace moho
       float unused[2];
     };
     static_assert(sizeof(SlotRecord) == 32, "SlotRecord must match IconSlot");
-
-    struct DrawConstants
-    {
-      VMatrix4 composite;
-    };
-    static_assert(sizeof(DrawConstants) % 16 == 0, "constant blocks are whole float4s");
 
     gpg::gal::Device* sDeviceOfResources = nullptr;
   } // namespace
@@ -348,6 +343,16 @@ namespace moho
     // `Flush`'s composite: view * projection.
     DrawConstants constants{};
     constants.composite = VMatrix4::Multiply(batcher.mViewMatrix, batcher.mProjectionMatrix);
+    const StrategicIconOutlineConfig outlineConfig = moho::GetStrategicIconOutlineConfig();
+    constants.outlineMode = static_cast<std::uint32_t>(outlineConfig.mMode);
+    constants.smartCutoff = outlineConfig.mSmartCutoff;
+    constants.showShield = outlineConfig.mShowShield ? 1U : 0U;
+    constants.goodCutoff = outlineConfig.mGoodCutoff;
+    constants.badCutoff = outlineConfig.mBadCutoff;
+    constants.colorGood = outlineConfig.mColorGood;
+    constants.colorMed = outlineConfig.mColorMed;
+    constants.colorBad = outlineConfig.mColorBad;
+    constants.colorShield = outlineConfig.mColorShield;
 
     gpg::gal::GpuDrawCall call{};
     call.program = mProgram.get();
@@ -507,6 +512,16 @@ namespace moho
 
     DrawConstants drawConstants{};
     drawConstants.composite = VMatrix4::Multiply(batcher.mViewMatrix, batcher.mProjectionMatrix);
+    const StrategicIconOutlineConfig outlineConfig = moho::GetStrategicIconOutlineConfig();
+    drawConstants.outlineMode = static_cast<std::uint32_t>(outlineConfig.mMode);
+    drawConstants.smartCutoff = outlineConfig.mSmartCutoff;
+    drawConstants.showShield = outlineConfig.mShowShield ? 1U : 0U;
+    drawConstants.goodCutoff = outlineConfig.mGoodCutoff;
+    drawConstants.badCutoff = outlineConfig.mBadCutoff;
+    drawConstants.colorGood = outlineConfig.mColorGood;
+    drawConstants.colorMed = outlineConfig.mColorMed;
+    drawConstants.colorBad = outlineConfig.mColorBad;
+    drawConstants.colorShield = outlineConfig.mColorShield;
     gpg::gal::GpuDrawCall call{};
     call.program = mProgram.get();
     call.bindings.constants = &drawConstants;
