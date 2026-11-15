@@ -1896,8 +1896,8 @@ namespace moho
   {
     None = 0,
     ColorShift = 1,
-    Combined = 2,
-    Smart = 3,
+    Sweep = 2,
+    Combined = Sweep, // Backward-compatibility alias
   };
 
   /**
@@ -1906,7 +1906,7 @@ namespace moho
   struct StrategicIconOutlineConfig
   {
     EStrategicIconOutlineMode mMode = EStrategicIconOutlineMode::None;
-    float mSmartCutoff = 1.0f;
+    float mSmartCutoff = 0.0f;
     bool mShowShield = true;
     float mGoodCutoff = 0.65f;
     float mBadCutoff = 0.30f;

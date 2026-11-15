@@ -172,6 +172,10 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, OptionsTableLoaded)
   )lua";
   lua_State* L = state.GetCState();
   const int status = lua_dostring(L, script);
+  if (status != 0) {
+    const char* err = lua_tostring(L, -1);
+    std::cout << "LUA SCRIPT ERROR: " << (err ? err : "null") << " (top=" << lua_gettop(L) << ")" << std::endl;
+  }
   EXPECT_EQ(status, 0) << (lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error");
 }
 
@@ -197,24 +201,24 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllFourOutlineOptionsPresentAndVali
     assert(type(mode.title) == 'string' and string.len(mode.title) > 0, "mode title missing")
     assert(type(mode.tip) == 'string' and string.len(mode.tip) > 0, "mode tip missing")
     assert(mode.custom ~= nil and mode.custom.states ~= nil, "mode states table missing")
-    assert(table.getn(mode.custom.states) == 4, "mode must have 4 states")
+    assert(table.getn(mode.custom.states) == 3, "mode must have 3 states")
     local modeKeys = {}
     for _, s in ipairs(mode.custom.states) do modeKeys[s.key] = true end
-    assert(modeKeys[0] and modeKeys[1] and modeKeys[2] and modeKeys[3], "mode state keys mismatch")
+    assert(modeKeys[0] and modeKeys[1] and modeKeys[2], "mode state keys mismatch")
     assert(type(mode.set) == 'function', "mode set must be a function")
 
     -- 2. strategic_icon_outline_smart_cutoff
     local cutoff = byKey['strategic_icon_outline_smart_cutoff']
     assert(cutoff ~= nil, "strategic_icon_outline_smart_cutoff item not found")
     assert(cutoff.type == 'toggle', "cutoff type must be toggle")
-    assert(math.abs(cutoff.default - 1.0) < 0.001, "cutoff default must be 1.0")
+    assert(math.abs(cutoff.default - 0.0) < 0.001, "cutoff default must be 0.0")
     assert(type(cutoff.title) == 'string' and string.len(cutoff.title) > 0, "cutoff title missing")
     assert(type(cutoff.tip) == 'string' and string.len(cutoff.tip) > 0, "cutoff tip missing")
     assert(cutoff.custom ~= nil and cutoff.custom.states ~= nil, "cutoff states table missing")
-    assert(table.getn(cutoff.custom.states) == 4, "cutoff must have 4 states")
+    assert(table.getn(cutoff.custom.states) == 5, "cutoff must have 5 states")
     local cutoffKeys = {}
     for _, s in ipairs(cutoff.custom.states) do cutoffKeys[s.key] = true end
-    assert(cutoffKeys[1.0] and cutoffKeys[0.95] and cutoffKeys[0.90] and cutoffKeys[0.80], "cutoff state keys mismatch")
+    assert(cutoffKeys[0.0] and cutoffKeys[1.0] and cutoffKeys[0.95] and cutoffKeys[0.90] and cutoffKeys[0.80], "cutoff state keys mismatch")
     assert(type(cutoff.set) == 'function', "cutoff set must be a function")
 
     -- 3. strategic_icon_outline_shield
@@ -248,6 +252,10 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllFourOutlineOptionsPresentAndVali
 
   lua_State* L = state.GetCState();
   const int status = lua_dostring(L, script);
+  if (status != 0) {
+    const char* err = lua_tostring(L, -1);
+    std::cout << "LUA SCRIPT ERROR: " << (err ? err : "null") << " (top=" << lua_gettop(L) << ")" << std::endl;
+  }
   EXPECT_EQ(status, 0) << (lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error");
 }
 
@@ -325,5 +333,9 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, SetCallbacksFallbackToConExecuteWhe
 
   lua_State* L = state.GetCState();
   const int status = lua_dostring(L, script);
+  if (status != 0) {
+    const char* err = lua_tostring(L, -1);
+    std::cout << "LUA SCRIPT ERROR: " << (err ? err : "null") << " (top=" << lua_gettop(L) << ")" << std::endl;
+  }
   EXPECT_EQ(status, 0) << (lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error");
 }

@@ -835,7 +835,7 @@ do
         if Supported() then
             table.insert(ui.items, {
                 title = "<LOC options_strategic_icon_outline_mode>Strategic Icon HP Outline",
-                tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (0=Off, 1=Color Shift, 2=Combined Sweep+Color, 3=Smart Damage Only).",
+                tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (0=Off, 1=Color Shift, 2=Sweep).",
                 key = 'strategic_icon_outline_mode',
                 type = 'toggle',
                 default = 0,
@@ -850,18 +850,17 @@ do
                     states = {
                         { text = "<LOC _Off>Off", key = 0 },
                         { text = "<LOC options_outline_colorshift>Color Shift", key = 1 },
-                        { text = "<LOC options_outline_combined>Combined", key = 2 },
-                        { text = "<LOC options_outline_smart>Smart (Damage Only)", key = 3 },
+                        { text = "<LOC options_outline_sweep>Sweep", key = 2 },
                     },
                 },
             })
 
             table.insert(ui.items, {
                 title = "<LOC options_strategic_icon_outline_cutoff>Smart Mode Cutoff",
-                tip = "<LOC options_strategic_icon_outline_cutoff_tip>In Smart mode, damaged units with health below this percentage display an outline.",
+                tip = "<LOC options_strategic_icon_outline_cutoff_tip>Filter outline by health threshold: 'Disable' shows outlines on all units; 100%-80% hides outlines when unit health is at or above that percentage.",
                 key = 'strategic_icon_outline_smart_cutoff',
                 type = 'toggle',
-                default = 1.0,
+                default = 0.0,
                 set = function(key, value, startup)
                     if SetStrategicIconOutlineConfig then
                         SetStrategicIconOutlineConfig({ smart_cutoff = value })
@@ -871,6 +870,7 @@ do
                 end,
                 custom = {
                     states = {
+                        { text = "<LOC _Disable>Disable", key = 0.0 },
                         { text = "100%", key = 1.0 },
                         { text = "95%", key = 0.95 },
                         { text = "90%", key = 0.90 },

@@ -125,18 +125,18 @@ namespace moho
 
   // Strategic icon health and shield outline configuration & convars.
   int ui_StrategicIconHpOutlineMode = 0;
-  float ui_StrategicIconHpOutlineSmartCutoff = 1.0f;
+  float ui_StrategicIconHpOutlineSmartCutoff = 0.0f;
   int ui_StrategicIconHpOutlineShield = 1;
   int ui_StrategicIconHpOutlinePalette = 0;
 
   TConVar<int> gTConVar_ui_StrategicIconHpOutlineMode(
     "ui_StrategicIconHpOutlineMode",
-    "Operating mode for strategic icon HP outline (0=None, 1=ColorShift, 2=Combined, 3=Smart).",
+    "Operating mode for strategic icon HP outline (0=None, 1=ColorShift, 2=Sweep).",
     &ui_StrategicIconHpOutlineMode
   );
   TConVar<float> gTConVar_ui_StrategicIconHpOutlineSmartCutoff(
     "ui_StrategicIconHpOutlineSmartCutoff",
-    "Health ratio threshold below which damaged units display outlines in Smart Mode (0.0 to 1.0).",
+    "Health ratio threshold below which damaged units display outlines (0.0=Disabled/All units, 1.0=Damaged only, 0.8-0.95=Threshold).",
     &ui_StrategicIconHpOutlineSmartCutoff
   );
   TConVar<int> gTConVar_ui_StrategicIconHpOutlineShield(
@@ -156,7 +156,7 @@ namespace moho
   {
     StrategicIconOutlineConfig config = sStrategicIconOutlineConfig;
     const int rawMode = ui_StrategicIconHpOutlineMode;
-    if (rawMode >= 0 && rawMode <= static_cast<int>(EStrategicIconOutlineMode::Smart)) {
+    if (rawMode >= 0 && rawMode <= static_cast<int>(EStrategicIconOutlineMode::Sweep)) {
       config.mMode = static_cast<EStrategicIconOutlineMode>(rawMode);
     } else {
       config.mMode = EStrategicIconOutlineMode::None;

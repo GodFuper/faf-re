@@ -1284,7 +1284,7 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
   const LuaPlus::LuaObject modeObj = table["mode"];
   if (modeObj.IsNumber()) {
     const int modeVal = modeObj.GetInteger();
-    if (modeVal >= 0 && modeVal <= static_cast<int>(EStrategicIconOutlineMode::Smart)) {
+    if (modeVal >= 0 && modeVal <= static_cast<int>(EStrategicIconOutlineMode::Sweep)) {
       config.mMode = static_cast<EStrategicIconOutlineMode>(modeVal);
     } else {
       config.mMode = EStrategicIconOutlineMode::None;

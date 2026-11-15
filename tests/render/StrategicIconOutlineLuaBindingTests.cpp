@@ -75,7 +75,7 @@ TEST_F(StrategicIconOutlineLuaBindingTest, LuaTableRoundtrip)
   ExecuteLua(script);
 
   const auto synced = moho::GetStrategicIconOutlineConfig();
-  EXPECT_EQ(synced.mMode, moho::EStrategicIconOutlineMode::Combined);
+  EXPECT_EQ(synced.mMode, moho::EStrategicIconOutlineMode::Sweep);
   EXPECT_NEAR(synced.mSmartCutoff, 0.90f, 0.001f);
   EXPECT_TRUE(synced.mShowShield);
   EXPECT_NEAR(synced.mGoodCutoff, 0.70f, 0.001f);

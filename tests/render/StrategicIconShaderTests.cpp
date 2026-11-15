@@ -17,7 +17,7 @@ TEST(StrategicIconShaderTest, ConstantBufferAlignmentAndInstanceStride)
 
   const DrawConstants defaults{};
   EXPECT_EQ(defaults.outlineMode, 0u);
-  EXPECT_FLOAT_EQ(defaults.smartCutoff, 1.0f);
+  EXPECT_FLOAT_EQ(defaults.smartCutoff, 0.0f);
   EXPECT_EQ(defaults.showShield, 1u);
   EXPECT_FLOAT_EQ(defaults.goodCutoff, 0.65f);
   EXPECT_FLOAT_EQ(defaults.badCutoff, 0.30f);
@@ -192,18 +192,26 @@ TEST(StrategicIconShaderTest, EndToEndGpuHealthDataPropagationIntegration)
   EXPECT_NEAR(healthFrac, 0.5f, 0.001f);
   EXPECT_NEAR(shieldFrac, 0.3f, 0.001f);
 
-  // 6. Verify Smart Mode (Mode 3) logic with damaged unit:
-  const float smartCutoff = 1.0f;
-  // Shader check: if (OutlineMode == 3 && healthFrac >= SmartCutoff && (shieldFrac >= 1.0 || shieldFrac <= 0.0)) discard;
-  const bool discardedHealthy = (healthFrac >= smartCutoff && (shieldFrac >= 1.0f || shieldFrac <= 0.0f));
-  EXPECT_FALSE(discardedHealthy); // Damaged unit MUST NOT be discarded!
+  // 6. Verify Smart Mode Cutoff logic across all modes:
+  // Shader check: if (SmartCutoff > 0.0 && healthFrac >= SmartCutoff && (shieldFrac >= 1.0 || shieldFrac <= 0.0)) discard;
+  const float smartCutoffDisabled = 0.0f;
+  const float smartCutoff100 = 1.0f;
 
-  // Now test an undamaged unit:
   const std::uint32_t fullHpRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 0.0f, true);
   const float fullHpFrac = float(fullHpRecord & 0xFFFFu) / 65535.0f;
   const float noShieldFrac = float((fullHpRecord >> 16) & 0xFFFFu) / 65535.0f;
-  const bool discardedFull = (fullHpFrac >= smartCutoff && (noShieldFrac >= 1.0f || noShieldFrac <= 0.0f));
-  EXPECT_TRUE(discardedFull); // Full HP undamaged unit MUST be discarded in Smart Mode!
+
+  // When Cutoff is disabled (0.0), even full HP undamaged units are NOT discarded:
+  const bool discardedWithCutoffDisabled = (smartCutoffDisabled > 0.0f && fullHpFrac >= smartCutoffDisabled && (noShieldFrac >= 1.0f || noShieldFrac <= 0.0f));
+  EXPECT_FALSE(discardedWithCutoffDisabled);
+
+  // When Cutoff is 1.0 (100%), damaged unit is NOT discarded:
+  const bool discardedDamaged = (smartCutoff100 > 0.0f && healthFrac >= smartCutoff100 && (shieldFrac >= 1.0f || shieldFrac <= 0.0f));
+  EXPECT_FALSE(discardedDamaged);
+
+  // When Cutoff is 1.0 (100%), full HP undamaged unit MUST be discarded:
+  const bool discardedFull = (smartCutoff100 > 0.0f && fullHpFrac >= smartCutoff100 && (noShieldFrac >= 1.0f || noShieldFrac <= 0.0f));
+  EXPECT_TRUE(discardedFull);
 }
 
 } // namespace moho

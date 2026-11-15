@@ -52,7 +52,7 @@ namespace moho
   {
     VMatrix4 composite;
     std::uint32_t outlineMode = 0U;
-    float smartCutoff = 1.0f;
+    float smartCutoff = 0.0f;
     std::uint32_t showShield = 1U;
     float goodCutoff = 0.65f;
     float badCutoff = 0.30f;

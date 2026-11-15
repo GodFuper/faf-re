@@ -15,14 +15,14 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
 
   // Verify initial default ConVar values
   EXPECT_EQ(ui_StrategicIconHpOutlineMode, 0);
-  EXPECT_FLOAT_EQ(ui_StrategicIconHpOutlineSmartCutoff, 1.0f);
+  EXPECT_FLOAT_EQ(ui_StrategicIconHpOutlineSmartCutoff, 0.0f);
   EXPECT_EQ(ui_StrategicIconHpOutlineShield, 1);
   EXPECT_EQ(ui_StrategicIconHpOutlinePalette, 0);
 
   // Verify default struct values
   StrategicIconOutlineConfig defaultConfig;
   EXPECT_EQ(defaultConfig.mMode, EStrategicIconOutlineMode::None);
-  EXPECT_FLOAT_EQ(defaultConfig.mSmartCutoff, 1.0f);
+  EXPECT_FLOAT_EQ(defaultConfig.mSmartCutoff, 0.0f);
   EXPECT_TRUE(defaultConfig.mShowShield);
   EXPECT_FLOAT_EQ(defaultConfig.mGoodCutoff, 0.65f);
   EXPECT_FLOAT_EQ(defaultConfig.mBadCutoff, 0.30f);
@@ -33,7 +33,7 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
 
   // Mutate config and apply
   StrategicIconOutlineConfig config;
-  config.mMode = EStrategicIconOutlineMode::Smart;
+  config.mMode = EStrategicIconOutlineMode::Sweep;
   config.mSmartCutoff = 0.95f;
   config.mShowShield = false;
   config.mGoodCutoff = 0.70f;
@@ -46,7 +46,7 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
   SetStrategicIconOutlineConfig(config);
   const auto retrieved = GetStrategicIconOutlineConfig();
 
-  EXPECT_EQ(retrieved.mMode, EStrategicIconOutlineMode::Smart);
+  EXPECT_EQ(retrieved.mMode, EStrategicIconOutlineMode::Sweep);
   EXPECT_FLOAT_EQ(retrieved.mSmartCutoff, 0.95f);
   EXPECT_FALSE(retrieved.mShowShield);
   EXPECT_FLOAT_EQ(retrieved.mGoodCutoff, 0.70f);
@@ -57,27 +57,29 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
   EXPECT_EQ(retrieved.mColorShield, 0xFF00FFFFu);
 
   // Verify ConVar synchronization
-  EXPECT_EQ(ui_StrategicIconHpOutlineMode, 3);
+  EXPECT_EQ(ui_StrategicIconHpOutlineMode, 2);
   EXPECT_FLOAT_EQ(ui_StrategicIconHpOutlineSmartCutoff, 0.95f);
   EXPECT_EQ(ui_StrategicIconHpOutlineShield, 0);
 
   // Test mutating ConVar directly reflects in GetStrategicIconOutlineConfig
-  ui_StrategicIconHpOutlineMode = 2; // Combined
+  ui_StrategicIconHpOutlineMode = 1; // ColorShift
   ui_StrategicIconHpOutlineSmartCutoff = 0.80f;
   ui_StrategicIconHpOutlineShield = 1;
 
   const auto synced = GetStrategicIconOutlineConfig();
-  EXPECT_EQ(synced.mMode, EStrategicIconOutlineMode::Combined);
+  EXPECT_EQ(synced.mMode, EStrategicIconOutlineMode::ColorShift);
   EXPECT_FLOAT_EQ(synced.mSmartCutoff, 0.80f);
   EXPECT_TRUE(synced.mShowShield);
 
-  // Test invalid out-of-bounds ConVar mode falls back safely to None
+  // Test invalid out-of-bounds ConVar mode falls back safely to None (e.g. 3, 99)
+  ui_StrategicIconHpOutlineMode = 3;
+  EXPECT_EQ(GetStrategicIconOutlineConfig().mMode, EStrategicIconOutlineMode::None);
   ui_StrategicIconHpOutlineMode = 99;
   EXPECT_EQ(GetStrategicIconOutlineConfig().mMode, EStrategicIconOutlineMode::None);
 
   // Reset back to defaults for clean state
   SetStrategicIconOutlineConfig(defaultConfig);
   EXPECT_EQ(ui_StrategicIconHpOutlineMode, 0);
-  EXPECT_FLOAT_EQ(ui_StrategicIconHpOutlineSmartCutoff, 1.0f);
+  EXPECT_FLOAT_EQ(ui_StrategicIconHpOutlineSmartCutoff, 0.0f);
   EXPECT_EQ(ui_StrategicIconHpOutlineShield, 1);
 }
