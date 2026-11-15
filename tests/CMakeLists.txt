@@ -29,6 +29,14 @@ set_target_properties(faf_platform_net_tests PROPERTIES FOLDER "Tests/Net")
 add_test(NAME platform_net COMMAND faf_platform_net_tests)
 set_tests_properties(platform_net PROPERTIES LABELS "Net")
 
+# What the lobby puts on the wire for another player (LOBMSG_NewPeer): the Windows game's
+# bytes; Linux runs the same file (cmake/FafLinux.cmake).
+add_executable(faf_lobby_wire_tests EXCLUDE_FROM_ALL net/LobbyWireTests.cpp)
+target_link_libraries(faf_lobby_wire_tests PRIVATE faf_engine gtest_main)
+set_target_properties(faf_lobby_wire_tests PROPERTIES FOLDER "Tests/Net")
+add_test(NAME lobby_wire COMMAND faf_lobby_wire_tests)
+set_tests_properties(lobby_wire PROPERTIES LABELS "Net")
+
 # net_FastRetransmit (issue #237): a lost DATA packet's recovery with the
 # switch off and on, at a fast rate and at the game's rate.
 add_executable(faf_fast_retransmit_tests EXCLUDE_FROM_ALL net/FastRetransmitTests.cpp)
@@ -416,6 +424,10 @@ add_executable(faf_editor_field_tests EXCLUDE_FROM_ALL editor/FieldTests.cpp edi
   editor/GroundKindTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdGroundKind.cpp
   editor/MaskGenTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMaskGen.cpp
   editor/RecipeTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdRecipes.cpp
+  editor/RoundSixFieldTests.cpp
+  editor/RoundSevenFieldTests.cpp
+  editor/RoundEightFieldTests.cpp
+  editor/RoundNineFieldTests.cpp
   editor/TextureSetsTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdTexScale.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdTextureSets.cpp
   editor/SlopeRulesTests.cpp
   editor/ErosionSuiteTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdErosionSuite.cpp
@@ -430,6 +442,9 @@ add_executable(faf_editor_field_tests EXCLUDE_FROM_ALL editor/FieldTests.cpp edi
   editor/UnitLabTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdUnitLab.cpp
   editor/EditorModsTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdEditorMods.cpp
   editor/UnitIconTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdUnitIcon.cpp
+  editor/RoundTwoFieldTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdKeptPaths.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdJsonTree.cpp
+  ${CMAKE_SOURCE_DIR}/src/editor/tools/EdSkeleton.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdDetailPass.cpp
+  ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMissionImport.cpp
   editor/SelectModesTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdSelectModes.cpp
   editor/ViewMenuTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdViewMenu.cpp
   editor/ScenarioInfoTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdScenarioInfo.cpp
@@ -505,11 +520,18 @@ add_executable(faf_editor_brush_tests EXCLUDE_FROM_ALL editor/HeightBrushTests.c
   editor/FafApiTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdFafApi.cpp
   editor/CommandsTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdCommands.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdWindowChrome.cpp
   editor/KeymapTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdKeymap.cpp
+  editor/RoundSixTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdStrataThemes.cpp
+  editor/RoundSevenTests.cpp
+  editor/RoundEightTests.cpp
+  editor/RoundNineTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdPerf.cpp
   editor/WorkspacesTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdWorkspaces.cpp
   editor/StatusTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdStatus.cpp
   editor/SettingsTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/ui/EdSettings.cpp
   editor/TerrainExtrasTests.cpp
   editor/MeshImportTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMeshImport.cpp
+  editor/RoundTwoAssetTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdLuaTable.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdJsonTree.cpp
+  ${CMAKE_SOURCE_DIR}/src/editor/tools/EdUnitWizard.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdScaAnim.cpp
+  ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMeshData.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMeshScan.cpp
   editor/BuildersTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdBuilders.cpp
   editor/ObjectsExtrasTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/tools/EdMapStats.cpp
   editor/EnvironmentExtrasTests.cpp ${CMAKE_SOURCE_DIR}/src/editor/doc/EdLookMoods.cpp
@@ -532,6 +554,8 @@ add_executable(faf_editor_brush_tests EXCLUDE_FROM_ALL editor/HeightBrushTests.c
   ${CMAKE_SOURCE_DIR}/src/editor/tools/EdHeightFile.cpp
   ${CMAKE_SOURCE_DIR}/src/editor/undo/EdHeightHistory.cpp)
 target_include_directories(faf_editor_brush_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_compile_definitions(faf_editor_brush_tests PRIVATE FAF_UNITWIZ_DATA="${CMAKE_SOURCE_DIR}/src/editor/tools/data/unitwizdata.lua"
+  FAF_THEMES_DATA="${CMAKE_SOURCE_DIR}/src/editor/tools/data/envlib_themes.lua")
 # The terrain library (Water erode, Rain and Deposit) turns running out of memory into an op error.
 target_compile_options(faf_editor_brush_tests PRIVATE /EHsc)
 # The zlib the engine links: 1.2.3 on both architectures (src/CMakeLists.txt).

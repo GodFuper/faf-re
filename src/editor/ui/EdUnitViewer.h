@@ -6,6 +6,11 @@
 
 #include <memory>
 
+#include "editor/tools/EdUnitIcon.h"
+#include "editor/tools/EdUnitPreview.h"
+
+#include <functional>
+
 namespace moho
 {
   class CD3DDynamicTextureSheet;
@@ -61,7 +66,64 @@ namespace faf::editor
       mPitch = pitch;
     }
 
+    /** The animated unit in the view (the scene reads and fills it). */
+    [[nodiscard]] UnitPreviewState& Preview() noexcept
+    {
+      return mPreview;
+    }
+
+    /** The game's icon of a unit, decoded to `side` x `side` RGBA bytes (set by the app). */
+    std::function<bool(const std::string&, int, std::vector<std::uint8_t>&)> loadGameIcon;
+    /** Icons for every unit the project edits or derives, one after another. */
+    void AskBatch();
+    bool AskIconFor(const std::string& unit, std::string& error);
+    /** Test runs (`/iconrecipe`): the icon's recipe; how many of its three pictures the last icon made. */
+    void SetIconRecipe(
+      const float heading,
+      const float pitch,
+      const float fov,
+      const float fill,
+      const float edge
+    ) noexcept
+    {
+      mIconHeading = heading;
+      mIconPitch = pitch;
+      mIconFov = fov;
+      mIconFill = fill;
+      mIconEdge = edge;
+    }
+    [[nodiscard]] int IconPictureCount() const noexcept
+    {
+      return (mIconPictures[0] != 0U ? 1 : 0) + (mIconPictures[1] != 0U ? 1 : 0) + (mIconPictures[2] != 0U ? 1 : 0);
+    }
+    /** After Make icon: how the made icon compares with the game's (empty before). */
+    [[nodiscard]] const std::string& Comparison() const noexcept
+    {
+      return mCompare;
+    }
+
   private:
+    void DrawInView(const std::string& source);
+    std::vector<std::string> mBatch;
+    int mBatchTotal = 0;
+    IconToneFit mTone;
+    bool mToneOn = false;
+    std::string mCompare;
+    std::vector<std::uint8_t> mShipped;
+    std::vector<std::uint8_t> mMade;
+    // The icon's recipe (FAF Studio's Icons panel): its own turn, the field of view (0: the game's flat thumbnail),
+    // how much of the icon the unit fills, the light edge; and the pictures of the last icon (render, game,
+    // difference).
+    float mIconHeading = 35.0f;
+    float mIconPitch = 15.0f;
+    float mIconFov = 0.0f;
+    float mIconFill = 0.9f;
+    float mIconEdge = 0.0f;
+    bool mIconRequest = false; // Request is drawing an icon (its recipe, not the view's turn)
+    std::uint64_t mIconPictures[3] = {0, 0, 0};
+    std::vector<std::pair<std::uint64_t, int>> mRetiredPictures; // freed a few frames later
+    void SetIconPicture(int which, const std::vector<std::uint32_t>& bgra);
+    UnitPreviewState mPreview;
     bool Request(
       std::shared_ptr<moho::CD3DDynamicTextureSheet>& sheet,
       int side,

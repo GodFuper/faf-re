@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 
 namespace faf::editor
@@ -159,6 +160,259 @@ namespace faf::editor
         return static_cast<std::uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
       };
       out[i] = (byte(p[3]) << 24) | (byte(p[0] * gain) << 16) | (byte(p[1] * gain) << 8) | byte(p[2] * gain);
+    }
+    return out;
+  }
+
+  IconMetrics CompareIcons(
+    const std::uint8_t* a,
+    const std::uint8_t* b,
+    const int side
+  )
+  {
+    IconMetrics m;
+    if (a == nullptr || b == nullptr || side <= 0) {
+      return m;
+    }
+    const int n = side * side;
+    int inter = 0;
+    int unionCount = 0;
+    double colourSum = 0.0;
+    int colourN = 0;
+    double alphaSum = 0.0;
+    double meanA[3] = {0, 0, 0};
+    double meanB[3] = {0, 0, 0};
+    for (int i = 0; i < n; ++i) {
+      const std::uint8_t* pa = a + static_cast<std::size_t>(i) * 4;
+      const std::uint8_t* pb = b + static_cast<std::size_t>(i) * 4;
+      const bool ina = pa[3] >= 128;
+      const bool inb = pb[3] >= 128;
+      if (ina) {
+        ++m.areaA;
+        for (int c = 0; c < 3; ++c) {
+          meanA[c] += pa[c];
+        }
+      }
+      if (inb) {
+        ++m.areaB;
+        for (int c = 0; c < 3; ++c) {
+          meanB[c] += pb[c];
+        }
+      }
+      if (ina && inb) {
+        ++inter;
+        colourSum += (std::abs(pa[0] - pb[0]) + std::abs(pa[1] - pb[1]) + std::abs(pa[2] - pb[2])) / 3.0;
+        ++colourN;
+      }
+      unionCount += ina || inb ? 1 : 0;
+      alphaSum += std::abs(pa[3] - pb[3]);
+    }
+    m.iou = unionCount > 0 ? static_cast<float>(inter) / static_cast<float>(unionCount) : 0.0f;
+    m.colour = colourN > 0 ? static_cast<float>(colourSum / colourN) : 255.0f;
+    m.alpha = static_cast<float>(alphaSum / n);
+    if (m.areaA > 0 && m.areaB > 0) {
+      double tint = 0.0;
+      for (int c = 0; c < 3; ++c) {
+        tint += std::abs(meanA[c] / m.areaA - meanB[c] / m.areaB) / 3.0;
+      }
+      m.tint = static_cast<float>(tint);
+    }
+    constexpr int kBlock = 8;
+    double coarse = 0.0;
+    int cells = 0;
+    for (int by = 0; by + kBlock <= side; by += kBlock) {
+      for (int bx = 0; bx + kBlock <= side; bx += kBlock) {
+        double sa[4] = {0, 0, 0, 0};
+        double sb[4] = {0, 0, 0, 0};
+        for (int y = 0; y < kBlock; ++y) {
+          for (int x = 0; x < kBlock; ++x) {
+            const std::size_t k = (static_cast<std::size_t>(by + y) * side + bx + x) * 4;
+            const double wa = a[k + 3] / 255.0;
+            const double wb = b[k + 3] / 255.0;
+            for (int c = 0; c < 3; ++c) {
+              sa[c] += a[k + c] * wa;
+              sb[c] += b[k + c] * wb;
+            }
+            sa[3] += a[k + 3];
+            sb[3] += b[k + 3];
+          }
+        }
+        double d = 0.0;
+        for (int c = 0; c < 4; ++c) {
+          d += std::abs(sa[c] - sb[c]) / (kBlock * kBlock);
+        }
+        coarse += d / 4.0;
+        ++cells;
+      }
+    }
+    m.coarse = cells > 0 ? static_cast<float>(coarse / cells) : 255.0f;
+    return m;
+  }
+
+  void IconToneFit::Add(
+    const std::string& faction,
+    const std::uint8_t* render,
+    const std::uint8_t* shipped,
+    const int side
+  )
+  {
+    Sums& s = sums[faction.empty() ? std::string("default") : faction];
+    for (int i = 0; i < side * side; ++i) {
+      const std::uint8_t* r = render + static_cast<std::size_t>(i) * 4;
+      const std::uint8_t* p = shipped + static_cast<std::size_t>(i) * 4;
+      if (r[3] >= 250 && p[3] >= 250 && p[0] + p[1] + p[2] < 705) {
+        ++s.n;
+        for (int c = 0; c < 3; ++c) {
+          s.x[c] += r[c];
+          s.y[c] += p[c];
+        }
+      }
+    }
+  }
+
+  bool IconToneFit::Gains(
+    const std::string& faction,
+    float (&gains)[3]
+  ) const
+  {
+    const auto fill = [&gains](const Sums& s) {
+      if (s.n <= 200) {
+        return false;
+      }
+      for (int c = 0; c < 3; ++c) {
+        gains[c] = s.x[c] > 0.0 ? static_cast<float>(s.y[c] / s.x[c]) : 1.0f;
+      }
+      return true;
+    };
+    if (const auto it = sums.find(faction); it != sums.end() && fill(it->second)) {
+      return true;
+    }
+    Sums all;
+    for (const auto& [f, s] : sums) {
+      all.n += s.n;
+      for (int c = 0; c < 3; ++c) {
+        all.x[c] += s.x[c];
+        all.y[c] += s.y[c];
+      }
+    }
+    return fill(all);
+  }
+
+  void ApplyIconTone(
+    std::vector<std::uint8_t>& rgba,
+    const float (&gains)[3]
+  )
+  {
+    for (std::size_t i = 0; i + 3 < rgba.size(); i += 4) {
+      for (int c = 0; c < 3; ++c) {
+        rgba[i + static_cast<std::size_t>(c)] = static_cast<std::uint8_t>(
+          std::clamp(static_cast<float>(rgba[i + static_cast<std::size_t>(c)]) * gains[c], 0.0f, 255.0f)
+        );
+      }
+    }
+  }
+
+  std::string IconFactionOf(
+    const std::string& id
+  )
+  {
+    if (id.size() < 3) {
+      return {};
+    }
+    const std::string p = id.substr(0, 2);
+    if (p == "ue" || p == "de" || p == "xe" || p == "be") {
+      return "UEF";
+    }
+    if (p == "ua" || p == "da" || p == "xa" || p == "ba") {
+      return "Aeon";
+    }
+    if (p == "ur" || p == "dr" || p == "xr" || p == "br") {
+      return "Cybran";
+    }
+    if (p == "xs" || p == "ds" || p == "bs") {
+      return "Seraphim";
+    }
+    return {};
+  }
+
+  void IconLightEdge(
+    std::vector<float>& rgba,
+    const int side,
+    const float solid,
+    const float soft,
+    const float peak
+  )
+  {
+    if ((solid <= 0.0f && soft <= 0.0f) || side <= 0 || rgba.size() < static_cast<std::size_t>(side) * side * 4) {
+      return;
+    }
+    const int reach = static_cast<int>(std::ceil(solid + soft));
+    std::vector<float> coverage(static_cast<std::size_t>(side) * side);
+    for (std::size_t i = 0; i < coverage.size(); ++i) {
+      coverage[i] = rgba[i * 4 + 3];
+    }
+    for (int y = 0; y < side; ++y) {
+      for (int x = 0; x < side; ++x) {
+        const std::size_t i = static_cast<std::size_t>(y) * side + x;
+        const float u = coverage[i];
+        float d = 99.0f;
+        if (u >= 0.5f) {
+          d = 0.0f;
+        } else {
+          for (int dy = -reach; dy <= reach; ++dy) {
+            const int yy = y + dy;
+            if (yy < 0 || yy >= side) {
+              continue;
+            }
+            for (int dx = -reach; dx <= reach; ++dx) {
+              const int xx = x + dx;
+              if (xx >= 0 && xx < side && coverage[static_cast<std::size_t>(yy) * side + xx] >= 0.5f) {
+                d = std::min(d, std::sqrt(static_cast<float>(dx * dx + dy * dy)));
+              }
+            }
+          }
+        }
+        float halo = 0.0f;
+        if (d <= solid) {
+          halo = peak;
+        } else if (soft > 0.0f && d < solid + soft) {
+          halo = peak * (1.0f - (d - solid) / soft);
+        }
+        const float alpha = u + halo * (1.0f - u);
+        float* const p = &rgba[i * 4];
+        if (alpha > 0.0f) {
+          const float white = halo * (1.0f - u);
+          for (int c = 0; c < 3; ++c) {
+            p[c] = (p[c] * u + white) / alpha;
+          }
+          p[3] = alpha;
+        } else {
+          p[0] = p[1] = p[2] = 1.0f;
+          p[3] = 0.0f;
+        }
+      }
+    }
+  }
+
+  std::vector<std::uint32_t> IconDifference(
+    const std::uint8_t* made,
+    const std::uint8_t* shipped,
+    const int side
+  )
+  {
+    std::vector<std::uint32_t> out(static_cast<std::size_t>(side) * side);
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      const bool inMade = made[i * 4 + 3] >= 128;
+      const bool inShipped = shipped[i * 4 + 3] >= 128;
+      std::uint32_t r = 40, g = 40, b = 40;
+      if (inMade && inShipped) {
+        r = 60, g = 190, b = 90;
+      } else if (inMade) {
+        r = 220, g = 70, b = 60;
+      } else if (inShipped) {
+        r = 70, g = 110, b = 230;
+      }
+      out[i] = 0xFF000000u | (r << 16) | (g << 8) | b;
     }
     return out;
   }

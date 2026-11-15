@@ -23,6 +23,7 @@
 #include "editor/doc/EdUnitPreset.h"
 #include "editor/doc/EdMarkerPreset.h"
 #include "editor/EdTools.h"
+#include "editor/tools/EdAreaLimit.h"
 #include "editor/doc/EdAdaptiveTables.h"
 #include "editor/doc/EdDocument.h"
 #include "editor/doc/EdUnits.h"
@@ -33,6 +34,13 @@
 #include "editor/tools/EdModalTransform.h"
 #include "editor/tools/EdHeightBrush.h"
 #include "editor/tools/EdTerrainPath.h"
+#include "editor/tools/EdKeptPaths.h"
+#include "editor/tools/EdPathEdit.h"
+#include "editor/tools/EdSkeleton.h"
+#include "editor/tools/EdDetailPass.h"
+#include "editor/tools/EdScaAnim.h"
+#include "editor/tools/EdMeshData.h"
+#include "editor/tools/EdUnitPreview.h"
 #include "editor/tools/EdMaskGen.h"
 #include "editor/tools/EdRecipes.h"
 #include "editor/tools/EdLayerConvert.h"
@@ -41,9 +49,12 @@
 namespace moho
 {
   class CameraImpl;
+  class CAniPose;
   class CWldMap;
   class MeshInstance;
+  struct RMeshBlueprint;
   class SimpleRenderWorldView;
+  struct RUnitBlueprint;
 } // namespace moho
 
 namespace faf::editor
@@ -134,6 +145,75 @@ namespace faf::editor
     {
       mTools = tools;
     }
+    /** The Paths panel's state: the view edits the current path with the mouse and carries out the panel's asks. */
+    void SetPathEdit(
+      PathEditState* state
+    ) noexcept
+    {
+      mPathEdit = state;
+    }
+    /**
+     * A kept path's result on the map (EdKeptPaths, Studio's paths.lua): Preview shows the heights without an undo step
+     * of their own (taken back by the next path action or when other edits come after it), Apply replaces the path's
+     * earlier result with the new heights, strata, props and decals as one undo step, Unapply takes the result off,
+     * Bake forgets it (the next Apply adds to the ground). What it did, in words.
+     */
+    std::string PreviewKeptPath(const std::vector<std::string>& ids);
+    bool RevertPathPreview();
+    /**
+     * `before` and `after` write heights inside the same stroke (they call BeforeWrite for what they change and add the
+     * rects they wrote), before the paths are built and after: the skeleton's pads and its lane smoothing.
+     */
+    std::string ApplyKeptPaths(
+      const std::vector<std::string>& ids,
+      const std::function<void(std::vector<SampleRect>&)>& before = {},
+      const std::function<void(std::vector<SampleRect>&)>& after = {},
+      std::shared_ptr<const PadResult>* skeletonPads = nullptr
+    );
+    /**
+     * The map skeleton (EdSkeleton, Studio's skeleton.lua): Generate replaces the skeleton paths (taking their results
+     * off first) with new ones for the start positions; Apply all puts its pads, its paths in order and the lane
+     * smoothing on the map as one undo step; Clear removes the skeleton paths. What it did, in words.
+     */
+    std::string GenerateSkeleton(const SkeletonSettings& settings);
+    std::string ApplySkeleton(const SkeletonSettings& settings);
+    std::string ClearSkeleton();
+    /** `/skeletontest style,topology` (test runs): generated, applied, logged, undone. */
+    void TestSkeleton(const std::string& spec);
+    /**
+     * The detail pass (EdDetailPass, Studio's detail.lua): every class scattered with its slope window, clustering and
+     * density, props and decals together as one undo step; Plan says how many each class would place; Measure counts
+     * the classes on this map (a reference). What it did, in words.
+     */
+    std::string RunDetailPass(const DetailRun& run);
+    [[nodiscard]] std::string PlanDetailPass(const DetailRun& run);
+    [[nodiscard]] std::string MeasureDetailPass();
+    /** The environment the map's layers suggest. */
+    [[nodiscard]] std::string DetailEnvironmentGuess() const;
+    /** Whether a file is in the game's data (decal textures); set by the app. */
+    std::function<bool(const std::string&)> gameFileExists;
+    /** A file of the game's data read whole (animations); set by the app. */
+    std::function<bool(const std::string&, std::string&)> readGameFile;
+    /**
+     * The unit viewer's animated unit (FAF Studio's unitview.lua): the unit drawn in the view by the game's mesh
+     * renderer at the camera's target, posed from its animation every frame, its bones, collision box, footprint,
+     * ranges and senses drawn over it.
+     */
+    void SetUnitPreview(
+      UnitPreviewState* state
+    ) noexcept
+    {
+      mUnitPreview = state;
+    }
+    std::string UnapplyKeptPath(const std::string& id);
+    std::string BakeKeptPath(const std::string& id);
+    /** The ground the paths start from at a point (game units). */
+    [[nodiscard]] float GroundHeightAt(float x, float z) const;
+    /** The map's symmetry as images a path is copied through (the Tools panel's symmetry). */
+    [[nodiscard]] std::vector<KeptPathImage> PathImages() const;
+    /** `/pathtest mode,x0,z0,x1,z1[,x2,z2...]` (test runs): a kept path made, applied, logged, unapplied, applied,
+     * undone. */
+    void TestKeptPath(const std::string& spec);
 
     /** Replaces the map's heights from a height image, resampled to the map's size, as one undo step. */
     bool ImportHeights(const std::filesystem::path& file, float scale, std::string& message);
@@ -144,6 +224,49 @@ namespace faf::editor
      * the part off the map is left out. False with `message` when nothing could be written.
      */
     bool WriteHeightRect(int x0, int z0, int w, int h, const std::vector<float>& heights, std::string& message);
+    /** Editor mods: a texture layer's (1..8) weights 0..1 over [x0, x0+w) x [z0, z0+h) of the paint, one undo step. */
+    bool
+    WriteMaskRect(int layer, int x0, int z0, int w, int h, const std::vector<float>& weights, std::string& message);
+    /** The paint's size in texels (false without a map's paint). */
+    bool MaskSize(int& width, int& height);
+    /** Editor mods (view/EdMapSceneMods.cpp): the map's props, decals and units, and changes to them, one undo step
+     * each (an error text, empty when done). */
+    struct ModObject
+    {
+      std::string what; // blueprint path / texture / unit blueprint id
+      std::string name; // a unit's name
+      std::string army; // a unit's army
+      float x = 0.0f, y = 0.0f, z = 0.0f;
+      float size = 0.0f; // a decal's size
+    };
+    [[nodiscard]] std::vector<ModObject> ModProps() const;
+    std::string ModAddProp(const std::string& blueprint, float x, float z, float scale);
+    std::string ModRemoveProp(int index);
+    [[nodiscard]] std::vector<ModObject> ModDecals() const;
+    std::string ModAddDecal(const std::string& texture, float x, float z, float size, float heading);
+    [[nodiscard]] std::vector<ModObject> ModUnits() const;
+    /**
+     * The Check's resources by the build rules (view/EdMapSceneMods.cpp): each Mass marker with the mass extractor's
+     * footprint (`extractor`), each Hydrocarbon marker with the hydrocarbon plant's (`plant`), through UnitFitAt, and
+     * the props standing inside it. The marker's name, its place and what blocks it.
+     */
+    struct ResourceFit
+    {
+      std::string marker;
+      bool mass = true; // a Mass marker (else Hydrocarbon), by its type
+      float x = 0.0f, z = 0.0f;
+      std::string problem; // "" when it can be built
+      int props = 0;       // props inside the footprint (an engineer reclaims them first)
+    };
+    [[nodiscard]] std::vector<ResourceFit> ResourceFits(const std::string& extractor, const std::string& plant) const;
+    /** Q / E: every selected prop, marker, unit and decal turned by `radians` about its own middle (undo steps). */
+    bool TurnEverySelected(float radians);
+    /** After a height change (RefreshHeights): props in the rectangles back on the ground now, units soon. */
+    void ReseatOnGround(const std::vector<SampleRect>& rects);
+    /** Each frame: the units asked for, once no stroke is painting. */
+    void ReseatUnitsNow();
+    bool mReseatUnits = false;
+    std::string ModAddUnit(const std::string& type, const std::string& army, float x, float z, std::string& name);
     /** How much texture layer `layer` (1..8) shows at a world point, 0..1 (-1 without masks or off the map). */
     [[nodiscard]] float LayerWeightAt(int layer, float x, float z);
     /**
@@ -202,6 +325,14 @@ namespace faf::editor
      * drawn in the symmetry's first part and placed with their copies, as one undo step; what it did, in words.
      */
     std::string ScatterOverMap(const EdTools::FillOptions& fill);
+    /** The mask generator's mask over the map (the app evaluates its rules), for Fill's "density from the rules". */
+    void SetMaskRulesSource(
+      std::function<bool(field::Grid&)> source
+    )
+    {
+      mMaskRulesSource = std::move(source);
+    }
+    std::function<bool(field::Grid&)> mMaskRulesSource;
     /** `/watermasktest foam|flatness|bias,<value>,<radius>[,keep]` (test runs): a dab at the map's middle and its undo.
      */
     void TestWaterMask(const std::string& spec);
@@ -279,6 +410,26 @@ namespace faf::editor
      * Writes a generated mask (0..1 on any grid over the map) into layer `layer` (1..8) as one undo step, made
      * symmetric as the Tools panel's symmetry asks. Returns the texels changed, or -1 with `message`.
      */
+    /**
+     * A water-linked mask (SC tools > Water) into `layer`: base + (1 - base) x mask x strength, `base` the layer as it
+     * was before the first apply; texels the user painted since the last apply (they differ from `last`) stay. With
+     * `remove`, the layer goes back to `base` (the user's paint stays). One undo step; returns the texels changed.
+     */
+    int WriteWaterLinkedMask(
+      const field::Grid* mask,
+      int layer,
+      float strength,
+      std::vector<std::uint8_t>& base,
+      std::vector<std::uint8_t>& last,
+      std::string& message
+    );
+    /** Several layer masks written as one undo step (Import / Export > Masks): `layers` layer -> mask (0..1). */
+    int WriteMasksTogether(
+      const std::vector<std::pair<int, field::Grid>>& layers,
+      MaskWriteMode mode,
+      bool takeAway,
+      std::string& message
+    );
     int WriteGeneratedMask(
       const field::Grid& mask,
       int layer,
@@ -363,6 +514,12 @@ namespace faf::editor
     );
     /** Changes a property of a marker ("name" renames it), as one undo step. */
     void EditMarker(const std::string& marker, const std::string& key, const std::string& value);
+    /** The first selected Camera Info marker's name, or "". */
+    [[nodiscard]] std::string SelectedCameraMarker() const;
+    /** The editor camera to the view a Camera Info marker keeps (its focus, orientation and zoom). */
+    bool LookThroughCamera(const std::string& marker);
+    /** The Camera Info marker takes the editor camera's view (focus on the ground, heading, pitch, zoom): one step. */
+    bool SetCameraMarkerFromView(const std::string& marker);
     /** An air path node grid `count` a side over the playable area (or the map), as one undo step; `replace` removes
      * the air nodes there were. */
     void FillAirGrid(int count, bool replace);
@@ -414,6 +571,149 @@ namespace faf::editor
     [[nodiscard]] SelectionProperties SelectionPropertiesNow() const;
     void ApplyPropertyEdit(const PropertyEdit& edit);
     [[nodiscard]] std::string HoverText() const;
+    /**
+     * Names written in the view (FAF Studio's overlay labels): the markers' and the areas' names at their places in
+     * view pixels (above the point), every one when the camera is close, else the selected and the hovered ones;
+     * marker types hidden on the toolbar are left out unless selected. `rgb` 0xRRGGBB.
+     */
+    struct ViewLabel
+    {
+      float x = 0.0f;
+      float y = 0.0f;
+      std::string text;
+      std::uint32_t rgb = 0xFFFFFF;
+    };
+    [[nodiscard]] std::vector<ViewLabel> ViewLabels() const;
+    // Areas in the view (FAF Studio's area tools): picked by their outline, moved, resized by their handles, drawn.
+    int mAreaDrag = 0; // 1 left, 2 top, 4 right, 8 bottom (resize), 16 move, 32 a new area
+    std::string mAreaDragName;
+    EdDocument::SaveSnapshot mAreaBefore;
+    float mAreaFrom[2] = {0.0f, 0.0f};
+    std::vector<std::array<float, 4>> mAreaStart;
+    std::vector<SaveEntry> mAreaClipboard;
+    [[nodiscard]] AreaBounds AreaLimitBounds() const;
+    bool AreaMouseDown(HWND window, POINT at, float groundX, float groundZ, bool add);
+    /** The area part under a view point: a picked area's handle (its edges, 1 2 4 8), an outline (16), none (0). */
+    struct AreaHit
+    {
+      std::string name;
+      int part = 0;
+    };
+    [[nodiscard]] AreaHit AreaUnder(POINT at) const;
+    /**
+     * The cursor over the view for the tool and what is under it (FAF Studio's cursors.lua): a brush's crosshair with
+     * its kind's sign, the move cross over what a drag moves, resize arrows over an area's handles, the pin where a
+     * click places a marker, a crosshair where another tool places; 0 keeps the arrow. A Windows cursor resource id, or
+     * one of the editor's own (1..6, EditorCursor's kinds 0..5).
+     */
+    [[nodiscard]] int ViewCursor() const;
+    /**
+     * The editor's own cursors, made once (FAF Studio's cursors.lua): 0 raise (+), 1 lower (-), 2 flatten (a level
+     * bar), 3 smooth (a wave), 4 noise (scattered dots), each a crosshair with its sign at the lower right; 5 the
+     * marker pin (its point the hot spot).
+     */
+    static HCURSOR EditorCursor(int kind);
+    /** ViewCursor's numbers 1..6 are EditorCursor's kinds 0..5. */
+    static constexpr int kEditorCursors = 6;
+    void AreaMouseMove(POINT at);
+    void AreaMouseUp();
+    bool AreaCtrlKey(char key);
+    /** The picked areas pasted (new AREA_n names) moved by (dx, dz), one undo step. */
+    void PasteAreas(float dx, float dz);
+    /** The picked areas go along with a marker drag (FAF Studio's selection moves its areas). */
+    std::vector<std::string> mAreaFollowNames;
+    std::vector<std::array<float, 4>> mAreaFollowStart;
+    void BeginAreaFollow();
+    void FollowAreas(float dx, float dz);
+    [[nodiscard]] bool NamesShown() const noexcept
+    {
+      return mNamesShown;
+    }
+    void SetNamesShown(
+      const bool shown
+    ) noexcept
+    {
+      mNamesShown = shown;
+    }
+    bool mNamesShown = true;
+    /** A Mass / Hydrocarbon marker's footprint and skirt (game units) and its state: 0 fine, 1 blocked by the build
+     * rules, 2 another resource in it, 3 off the build grid. */
+    struct ResourceMark
+    {
+      std::string marker;
+      bool mass = true;
+      float x = 0.0f;
+      float z = 0.0f;
+      int sizeX = 1;
+      int sizeZ = 1;
+      float footprint[4] = {0, 0, 0, 0};
+      float skirt[4] = {0, 0, 0, 0};
+      int state = 0;
+    };
+    [[nodiscard]] std::vector<ResourceMark> ResourceMarks() const;
+    /**
+     * The mesh terrain drawn as the game draws models (FAF Studio's mesh view): each patch a model instance with its
+     * material's textures (the NormalMappedTerrain shader: lit, shadowed), the height field hidden in Mesh only
+     * (ren_Terrain), the patches hidden in Terrain only. Made once the rules are up; again on each load.
+     */
+    std::vector<moho::MeshInstance*> mMeshPatchInstances;
+    std::vector<moho::RMeshBlueprint*> mMeshPatchBlueprints;
+    bool mMeshInstancesTried = false;
+    bool mMeshHidesTerrain = false;
+    void BuildMeshInstances();
+    /**
+     * FAF Studio's mesh material baked for one patch (its shader minus the view-dependent sun highlight and the dynamic
+     * shadow): the two layers blended by light mask 1's alpha, the three baked light masks through the blended normal
+     * map, glow, alpha test, the water ramp below the water level, haze into the void colour; one texture over the
+     * patch seen from above, with a copy of the patch whose first texture coordinates span it, both in the editor's
+     * cache (mounted at /editor_meshview). False (and `why`) when it can't be made; the patch is drawn lit instead.
+     */
+    bool
+    BakeMeshPatch(std::size_t index, int generation, std::string& meshPath, std::string& albedoPath, std::string& why);
+    /** Where the baked patches go (the app's cache folder; empty: no bake). */
+    void SetMeshViewCache(
+      std::filesystem::path folder
+    )
+    {
+      mMeshViewCache = std::move(folder);
+    }
+    std::filesystem::path mMeshViewCache;
+    int mMeshBakeGeneration = 0;
+    void DeleteMeshInstances();
+    void SyncMeshView();
+    /** Test runs: the cursor the view would show with the pointer at `at` (view pixels). */
+    [[nodiscard]] int ViewCursorAt(
+      const POINT at
+    )
+    {
+      const POINT kept = mCursor;
+      mCursor = at;
+      const int cursor = ViewCursor();
+      mCursor = kept;
+      return cursor;
+    }
+    /** Test runs: a world point in view pixels. */
+    [[nodiscard]] POINT ScreenOf(float x, float z) const;
+    /** Test runs: GroundAt from outside. */
+    bool GroundAtForTest(
+      const float x,
+      const float y,
+      float& outX,
+      float& outZ
+    ) const
+    {
+      return GroundAt(x, y, outX, outZ);
+    }
+    /** Test runs: how many patch models are made. */
+    [[nodiscard]] std::size_t MeshPatchModels() const noexcept
+    {
+      return mMeshPatchInstances.size();
+    }
+    /** Test runs: the area tools a step at a time (draw, move, resize, keep inside, duplicate, delete), as a line. */
+    std::string TestAreaTools();
+    /** The resource footprints' build checks (marker name -> why it can't be built), every 30 frames. */
+    std::map<std::string, std::string> mResourceProblems;
+    int mResourceFrames = 0;
     /** The Decals tool's path: its points, and how many decals it would place (the cursor as its next point). */
     [[nodiscard]] int DecalPathPointCount() const noexcept
     {
@@ -526,11 +826,74 @@ namespace faf::editor
         !mSelection.empty() || !mMarkerSelection.empty() || !mDecalSelection.empty() || !mUnitSelection.empty();
       return true;
     }
-    /** Test runs: as a right click would. */
-    void AskContextMenu() noexcept
+    /** Test runs: as a right click at the view's middle would. */
+    void AskContextMenu();
+    /**
+     * Where the view's menu was asked (FAF Studio's menus.lua): the ground point and its height, and what stands
+     * there (it is selected when it wasn't): the menu's header, and its entries for that thing.
+     */
+    struct ContextPoint
     {
-      mContextAsk = true;
+      bool valid = false;
+      float x = 0.0f;
+      float z = 0.0f;
+      float height = 0.0f;
+      std::string what;       // "marker Mass 03 (Mass)", "unit UNIT_4 of ARMY_1", "prop ...", "decal"
+      std::string marker;     // the marker's name
+      std::string markerType; // its type
+      std::string unitArmy;   // the unit's army and name
+      std::string unitName;
+    };
+    [[nodiscard]] const ContextPoint& ContextPointNow() const noexcept
+    {
+      return mContextPoint;
     }
+    /** An army's group paths (each a list of names from under its root; the root is the empty path). */
+    [[nodiscard]] std::vector<std::vector<std::string>> GroupPathsOf(const std::string& army) const;
+    /** The view menu's place-here entries: the Units tool's unit, the Props tool's prop at (x, z); a give. */
+    void PlaceUnitHere(
+      const float x,
+      const float z
+    )
+    {
+      PlaceUnits(x, z);
+    }
+    void PlacePropHere(
+      const float x,
+      const float z
+    )
+    {
+      PlaceProps(x, z);
+    }
+    int GiveSelectionTo(
+      const std::string& army
+    )
+    {
+      return GiveSelectedUnits(army);
+    }
+    /** The Import / Export window's import (the package watch brings a file in this way). */
+    std::string InteropImportNow(
+      const bool live
+    )
+    {
+      return InteropImport(live);
+    }
+    /** Test runs: a unit line as a drag would place it; how many marker models are drawn. */
+    void PlaceUnitLineHere(
+      const float x0,
+      const float z0,
+      const float x1,
+      const float z1
+    )
+    {
+      PlaceUnitLine(x0, z0, x1, z1);
+    }
+    [[nodiscard]] std::size_t MarkerModelCount() const noexcept
+    {
+      return mMarkerModels.size();
+    }
+    /** A mass or hydrocarbon marker to the middle of its build grid cell (x.5, z.5): one undo step. */
+    bool SnapMarkerToGrid(const std::string& marker);
     /** The view to the point (x, z) of the map, from no farther than `distance`. */
     void FramePoint(float x, float z, float distance = 80.0f);
     /** Test runs (`/selectunit <army>,<unit>`): that unit selected and the view on it. */
@@ -560,8 +923,13 @@ namespace faf::editor
      * Edit > Delete selection (the Delete key): the active tool's selection (units, decals, markers), or with the
      * Select tool what it has selected, of whichever kind; props otherwise. One undo step.
      */
+    /** The picked areas (Markers tool) deleted as one undo step; false when none are picked. */
+    bool DeleteSelectedAreas();
     void DeleteSelected()
     {
+      if (mTools != nullptr && mTools->MarkersToolActive() && mMarkerSelection.empty() && DeleteSelectedAreas()) {
+        return;
+      }
       if (mTools != nullptr && mTools->SelectToolActive()) {
         switch (SelectedKind()) {
         case PickKind::Marker:
@@ -642,6 +1010,10 @@ namespace faf::editor
     std::map<std::string, moho::MeshInstance*> mDeposits;
     void UpdateDeposits();
     void DeleteDeposits();
+    /** The markers' prop models (Markers tool > Draw markers as their models), by marker name and prop. */
+    std::map<std::string, std::pair<std::string, moho::MeshInstance*>> mMarkerModels;
+    void UpdateMarkerModels();
+    void DeleteMarkerModels();
     bool mPropsDone = false;
     /** The armies' units from `_save.lua` (every group's), drawn as the game places them, and which unit each is. */
     struct UnitRef
@@ -732,6 +1104,91 @@ namespace faf::editor
     /** Hands written samples back to the height field (its tiers and revision) and redraws their terrain. */
     void RefreshHeights(const std::vector<SampleRect>& rects);
     EdTools* mTools = nullptr;
+    PathEditState* mPathEdit = nullptr;
+    // The unit viewer's animated unit.
+    UnitPreviewState* mUnitPreview = nullptr;
+    moho::MeshInstance* mPreviewInstance = nullptr;
+    std::string mPreviewKey; // unit and army the instance was made for
+    bool mPreviewStageOn = false; // the map's terrain, sky, water and border are off for the preview
+    int mPreviewLodShown = -1;    // the LOD the camera was last put at
+    std::string mPreviewLight = "Map";
+    bool mPreviewHasMapLight = false; // mPreviewMapLight holds the map's own light (before the first preset)
+    LightingState mPreviewMapLight;
+    /** A shot the unit in the view fired: its projectile's model flying (straight or on its weapon's arc). */
+    struct PreviewShot
+    {
+      moho::MeshInstance* mesh = nullptr;
+      float pos[3] = {0.0f, 0.0f, 0.0f};
+      float vel[3] = {0.0f, 0.0f, 0.0f};
+      float gravity = 0.0f;
+      float travelled = 0.0f;
+      float range = 0.0f;
+      float startX = 0.0f, startZ = 0.0f;
+    };
+    std::vector<PreviewShot> mPreviewShots;
+    void FirePreview(const moho::RUnitBlueprint& unit, UnitPreviewState& s);
+    void TickPreviewShots(float frameSeconds, UnitPreviewState* s);
+    void DropPreviewShots();
+    void SetPreviewStage(bool on);
+    void SetPreviewLight(const std::string& name);
+    std::string mPreviewAnimPath;
+    ScaAnimation mPreviewAnim;
+    std::shared_ptr<moho::CAniPose> mPreviewPose;
+    std::vector<int> mPreviewBoneMap; // animation bone -> skeleton bone (-1 none)
+    float mPreviewPos[3] = {0.0f, 0.0f, 0.0f};
+    void TickUnitPreview(float frameSeconds);
+    void DrawUnitPreview(moho::CD3DPrimBatcher& batcher);
+    void DropUnitPreview();
+    // A mesh terrain map's patches (EdMeshData), drawn shaded over the field, and what placing stands on.
+    edmesh::MeshMap mMeshMap;
+    int mMeshMode = 1;
+    std::vector<moho::CD3DPrimBatcher::Vertex> mMeshTris;
+    std::vector<moho::CD3DPrimBatcher::Vertex> mMeshEdges;
+    void DrawMeshTerrain(moho::CD3DPrimBatcher& batcher);
+
+  public:
+    /**
+     * A mesh terrain map (FAF Studio's: the scenario's TerrainSystem = 'mesh' names its manifest TerrainMesh): its
+     * patches read (again), what happened in words; an empty one when the map isn't one.
+     */
+    std::string LoadMeshTerrain();
+    /** The mesh terrain map as loaded: the Mesh terrain panel edits it in place, Save writes and loads it again. */
+    [[nodiscard]] edmesh::MeshMap& MeshMapRef() noexcept
+    {
+      return mMeshMap;
+    }
+    /** What the view shows: 0 the height field, 1 the mesh, 2 both (the mesh and its edges). */
+    void SetMeshMode(
+      const int mode
+    ) noexcept
+    {
+      mMeshMode = mode;
+    }
+    /** The patches' checks (EdMeshScan), as lines. */
+    [[nodiscard]] std::vector<std::string> CheckMeshTerrain();
+    /** The ground things are placed on: the mesh surface while it is shown (the highest one up to 40 above the field).
+     */
+    [[nodiscard]] float PlacementHeight(float x, float z) const;
+
+  private:
+    // Kept paths: a point drag (its model before), the preview's place in the undo order.
+    bool mPathDragging = false;
+    bool mPathDragMoved = false;
+    float mPathDragX = 0.0f;
+    float mPathDragZ = 0.0f;
+    std::unique_ptr<EdDocument::PathsState> mPathDragBefore;
+    bool mPathPreviewShown = false;
+    std::size_t mPathPreviewDepth = 0;
+    int mPathPreviewRevision = -1;
+    bool PathMouseDown(HWND window, float x, float z, bool shift, bool ctrl);
+    void PathMouseMove(float x, float z);
+    bool PathMouseUp();
+    bool PathKey(WPARAM key);
+    void TickPaths();
+    void DrawKeptPaths(moho::CD3DPrimBatcher& batcher, const moho::CHeightField& field);
+    /** Takes `result`'s props and decals off the map, puts `next`'s on (no undo step: the caller's step holds them). */
+    void
+    SwapPathItems(const KeptPathResult* result, const KeptPathResult* next, bool& propsChanged, bool& decalsChanged);
 
     /** The symmetry check (EdSymmetryCheck.cpp) on the map's heights, its result to the Tools panel. */
     void RunSymmetryCheck();
@@ -867,6 +1324,10 @@ namespace faf::editor
     bool mRulerShown = false;
     float mRulerFrom[2] = {0.0f, 0.0f};
     float mRulerTo[2] = {0.0f, 0.0f};
+    /** Studio's ruler path: the segments before the one being drawn (Alt+Shift+drag continues from the last end). */
+    std::vector<std::array<float, 4>> mRulerDone;
+    /** The ruler's text: the segment, and the total over the path when it has more than one. */
+    [[nodiscard]] std::string RulerText() const;
     std::vector<std::uint8_t> mTypesBefore;
     std::vector<TerrainTypeRun> mTypeRuns;
     int mTypeRunsRevision = -1;
@@ -928,6 +1389,29 @@ namespace faf::editor
     /** Where a pick sits and how big its ring is, for the hover ring. */
     [[nodiscard]] bool PickPlace(const PickHit& hit, float& x, float& z, float& radius) const;
     PickKind mSelectKind = PickKind::None;
+    ContextPoint mContextPoint;
+    /** A mask shown on the terrain (the mask generator's "Show the mask on the map"); empty: none. */
+    field::Grid mOverlayMask;
+
+  public:
+    void SetOverlayMask(
+      field::Grid mask
+    )
+    {
+      mOverlayMask = std::move(mask);
+    }
+    [[nodiscard]] const field::Grid& OverlayMask() const noexcept
+    {
+      return mOverlayMask;
+    }
+    /** Test runs: how many props the map has. */
+    [[nodiscard]] std::size_t PropCountNow() const;
+
+  private:
+    /** MirrorSelection: units' copies to the mirrored army (MirrorHalf's choice), else their own. */
+    bool mMirrorMapArmies = false;
+    /** The ground point under `at` and what stands there (selected when it wasn't), for the view's menu. */
+    void TakeContextPick(POINT at);
     /** The stroke under way was started with the right button: the brush's opposite (Raise/Lower, Paint/Erase). */
     bool mPaintInverted = false;
     float mStrokeStartHeight = 0.0f;
@@ -1108,6 +1592,17 @@ namespace faf::editor
     /** The scatter or erase brush at (x, z) during its drag. */
     void DecalBrushAt(float x, float z);
     bool mDecalBrushing = false;
+    // The Units tool's line (FAF Studio's placer.lua): a drag places units a footprint apart from where it began.
+    bool mUnitLining = false;
+    float mUnitLineFrom[2] = {0.0f, 0.0f};
+    // The last line's end (units or props): Ctrl+click goes on from it, a corner at a time.
+    bool mLineEndKept = false;
+    float mLineEnd[2] = {0.0f, 0.0f};
+    // PlaceUnits called for a line: the units gathered into the line's one undo step.
+    bool mUnitBatch = false;
+    std::vector<std::pair<std::string, std::string>> mUnitBatchPlaced;
+    /** Units of the Units tool's type from (x0, z0) to (x1, z1), a footprint apart (with their copies): one step. */
+    void PlaceUnitLine(float x0, float z0, float x1, float z1);
     // The Props tool's Line: where the drag began.
     bool mPropLine = false;
     float mPropLineFromX = 0.0f;
@@ -1223,6 +1718,8 @@ namespace faf::editor
   public:
     /** The ruler between two points (test runs, `/ruler`). */
     void SetRuler(float x0, float z0, float x1, float z1);
+    /** The ruler path goes on from its last end to (x, z), as Alt+Shift+drag does. */
+    void ContinueRuler(float x, float z);
     /** Ctrl+C, Ctrl+V or Ctrl+D (`key` 'C', 'V' or 'D'), as the keyboard gives them and test runs (`/uiclicks ^D`). */
     /**
      * Edit > Mirror the selection (FAF Studio's mirror.lua): each selected marker, prop, unit and decal copied to its
@@ -1235,6 +1732,21 @@ namespace faf::editor
      * symmetry's first part removed, and the first part's copied over the rest as the symmetry maps it.
      */
     int MirrorHalf();
+    /** Edit > Mirror the whole half's choices (FAF Studio's mirrorhalf.lua). */
+    struct MirrorHalfOptions
+    {
+      int source = 0;      // which of the symmetry's parts is copied (0 = the first, by z then x)
+      bool markers = true; // start positions never
+      bool props = true;
+      bool decals = true;
+      bool units = false;
+      bool areas = false;     // AREA_1 (the playable area) is never removed
+      bool replace = true;    // the other parts emptied first, else the copies added
+      bool mapArmies = false; // a unit's copy to the army whose start is the copy of its army's start
+    };
+    int MirrorHalf(const MirrorHalfOptions& options);
+    /** How many parts the symmetry has (1 = none). */
+    [[nodiscard]] int SymmetryParts() const;
     /** The mask generator's result written into one of the water's masks, one undo step; cells changed. */
     int
     WriteGeneratedWaterMask(const field::Grid& mask, WaterMask kind, int mode, float strength, std::string& message);
@@ -1372,6 +1884,7 @@ namespace faf::editor
       None,
       Orbit,
       Pan,
+      Zoom,
     };
     Drag mDrag = Drag::None;
     POINT mDragFrom{};

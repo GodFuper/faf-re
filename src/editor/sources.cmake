@@ -109,6 +109,7 @@ set(FAF_EDITOR_SOURCES
   ui/EdWindowChrome.cpp
   ui/EdTitleBar.cpp
   ui/EdPalette.cpp
+  ui/EdPerf.cpp
   ui/EdTheme.cpp
   ui/EdThemeStyle.cpp
   ui/EdIcons.cpp
@@ -138,6 +139,35 @@ set(FAF_EDITOR_SOURCES
   tools/EdCameraFrame.cpp
   tools/EdResize.cpp
   tools/EdTerrainPath.cpp
+  tools/EdKeptPaths.cpp
+  tools/EdSkeleton.cpp
+  doc/EdJsonTree.cpp
+  view/EdMapScenePaths.cpp
+  view/EdMapSceneMods.cpp
+  ui/EdPathsPanel.cpp
+  tools/EdDetailPass.cpp
+  view/EdMapSceneDetail.cpp
+  ui/EdDetailPanel.cpp
+  tools/EdMissionImport.cpp
+  terrain/gpu/EdGpu.cpp
+  terrain/gpu/EdGpuOps.cpp
+  terrain/gpu/EdGpuErosion.cpp
+  terrain/gpu/EdGpuFieldFilt.cpp
+  terrain/gpu/EdGpuFieldFlow.cpp
+  terrain/gpu/EdGpuFieldIter.cpp
+  terrain/gpu/EdGpuGen.cpp
+  terrain/gpu/EdGpuGenFilt.cpp
+  doc/EdLuaTable.cpp
+  doc/EdStrataThemes.cpp
+  tools/EdUnitWizard.cpp
+  ui/EdUnitWizardPanel.cpp
+  tools/EdScaAnim.cpp
+  view/EdMapSceneUnitPreview.cpp
+  tools/EdMeshData.cpp
+  tools/EdMeshScan.cpp
+  view/EdMapSceneMesh.cpp
+  ui/EdUiQa.cpp
+  ui/EdSelfTests.cpp
   tools/EdTextureFiles.cpp
   tools/EdScm.cpp
   doc/EdPreview.cpp

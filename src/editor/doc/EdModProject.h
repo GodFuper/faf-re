@@ -67,6 +67,12 @@ namespace faf::editor
     }
   };
 
+  /** The first line of the files the new unit wizard writes (EdUnitWizard): Studio's mark, so its projects read alike.
+   */
+  extern const char* const kUnitWizardMark;
+  /** Whether `units/<id>/<id>_unit.bp` of the project folder is a unit of the new unit wizard (its own blueprint). */
+  [[nodiscard]] bool ModWizardUnit(const std::filesystem::path& folder, const std::string& id);
+
   /** What a project's undo step holds: its changes and its derived units. */
   struct ModChanges
   {
@@ -131,6 +137,14 @@ namespace faf::editor
    * A unit's merge blueprint (only its changes). A weapon change whose label the unit doesn't have is left out and
    * named in `dropped`. Empty when the unit has no change left.
    */
+  /**
+   * Projectile changes (Studio's fxedit.lua) sit in `edits` under the projectile's blueprint id,
+   * `/projectiles/<name>/<name>_proj.bp`: ModProjectileId tells them from unit ids; each is written as
+   * `projectiles/<name>/<name>_proj.bp` (ModProjectileFile), a merge of the game's (ModMergeProjectile).
+   */
+  [[nodiscard]] bool ModProjectileId(const std::string& id);
+  [[nodiscard]] std::string ModProjectileFile(const std::string& id);
+  [[nodiscard]] std::string ModMergeProjectile(const std::string& id, const std::map<std::string, double>& edits);
   [[nodiscard]] std::string ModMergeBlueprint(
     const std::string& id,
     const std::map<std::string, double>& edits,

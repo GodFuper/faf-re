@@ -233,7 +233,7 @@ namespace faf::editor
         ImGui::TextUnformatted(now.name.c_str());
       }
       if (now.count > 1) {
-        ImGui::TextDisabled("and %d more selected (the first is edited)", now.count - 1);
+        ImGui::TextDisabled("and %d more selected (the first is edited; a heading turns them all)", now.count - 1);
       }
     }
 
@@ -422,6 +422,25 @@ namespace faf::editor
           }
           ImGui::PopID();
         }
+      }
+      // A Camera Info marker: the view it keeps (FAF Studio's markerprops: look through it, take the view now).
+      if (now.type == "Camera Info" && Section("Camera")) {
+        const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (ImGui::Button("View through it", ImVec2(half, 0.0f))) {
+          PropertyEdit change;
+          change.what = PropertyEdit::What::CameraView;
+          mTools.AskPropertyEdit(change);
+        }
+        EdSetItemTooltip("The editor's camera goes to the view this marker keeps");
+        ImGui::SameLine();
+        if (ImGui::Button("Set from the view", ImVec2(-1.0f, 0.0f))) {
+          PropertyEdit change;
+          change.what = PropertyEdit::What::CameraFromView;
+          mTools.AskPropertyEdit(change);
+        }
+        EdSetItemTooltip(
+          "The marker keeps the editor camera's view: its focus, heading, pitch and zoom (one undo step)"
+        );
       }
       // An adaptive map: which army this resource spawns with, which option group it belongs to (_tables.lua).
       if ((now.type == "Mass" || now.type == "Hydrocarbon") && Section("Adaptive map")) {

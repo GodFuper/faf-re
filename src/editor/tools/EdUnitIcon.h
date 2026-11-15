@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -41,4 +42,57 @@ namespace faf::editor
    */
   [[nodiscard]] std::vector<std::uint32_t>
   KeyedIcon(const std::uint32_t* onBlack, const std::uint32_t* onWhite, int side, float wantLight);
+
+  /**
+   * How a made icon compares with the one the game ships (FAF Studio's icongen.lua Compare), both RGBA 0..255 bytes of
+   * the same size: the silhouettes' overlap (intersection over union of the pixels with alpha >= 128), the mean colour
+   * difference where both are drawn, the mean alpha difference, the difference of the two drawn parts' mean colours
+   * (tint), and the mean difference of 8 x 8 blocks (coarse look).
+   */
+  struct IconMetrics
+  {
+    float iou = 0.0f;
+    int areaA = 0;
+    int areaB = 0;
+    float colour = 255.0f;
+    float alpha = 255.0f;
+    float tint = 255.0f;
+    float coarse = 255.0f;
+  };
+  [[nodiscard]] IconMetrics CompareIcons(const std::uint8_t* a, const std::uint8_t* b, int side);
+
+  /**
+   * Tone fit (Studio's ToneFit): per faction, what the shipped icons' colours are over the renders' where both are
+   * fully drawn and the shipped one isn't near white; gains (r, g, b) once a faction has 200 pixels.
+   */
+  struct IconToneFit
+  {
+    struct Sums
+    {
+      long long n = 0;
+      double x[3] = {0, 0, 0};
+      double y[3] = {0, 0, 0};
+    };
+    std::map<std::string, Sums> sums;
+    void Add(const std::string& faction, const std::uint8_t* render, const std::uint8_t* shipped, int side);
+    /** The faction's gains, or false when it has too few pixels (then `all` factions together, if enough). */
+    bool Gains(const std::string& faction, float (&gains)[3]) const;
+  };
+  /** The colours of RGBA bytes times the gains (alpha kept). */
+  void ApplyIconTone(std::vector<std::uint8_t>& rgba, const float (&gains)[3]);
+  /**
+   * The shipped icons' light edge (FAF Studio's Glow): a white halo round the silhouette, `solid` pixels at `peak`,
+   * then fading out over `soft` pixels, the unit over it; pixels it doesn't reach become clear white. `rgba` is
+   * `side` x `side` RGBA floats 0..1 (IconPixels'). Nothing when solid and soft are 0.
+   */
+  void IconLightEdge(std::vector<float>& rgba, int side, float solid, float soft = 3.5f, float peak = 0.65f);
+  /**
+   * Two icons' silhouettes (alpha from 128) as a picture (FAF Studio's DiffImage): green where both are, red only the
+   * first (made), blue only the second (the game's), dark grey neither. RGBA bytes in, BGRA words out.
+   */
+  [[nodiscard]] std::vector<std::uint32_t>
+  IconDifference(const std::uint8_t* made, const std::uint8_t* shipped, int side);
+  /** A unit id's faction by its letters (uel / uea / ues / ueb: UEF, ua*: Aeon, ur*: Cybran, xs*: Seraphim); "" none.
+   */
+  [[nodiscard]] std::string IconFactionOf(const std::string& id);
 } // namespace faf::editor

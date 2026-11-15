@@ -418,10 +418,17 @@ add_executable(faf_platform_net_tests EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/te
 target_link_libraries(faf_platform_net_tests PRIVATE faf_sim gtest_main)
 target_link_options(faf_platform_net_tests PRIVATE -Wl,--error-limit=0)
 add_test(NAME platform_net COMMAND faf_platform_net_tests)
-# The Win32 shim's handles when one thread closes what another still uses, and its shell folders
-# (Windows' behaviour).
+# What the lobby puts on the wire for another player (LOBMSG_NewPeer), as Windows runs it: the
+# Windows game's bytes, which an LP64 u_long does not have.
+add_executable(faf_lobby_wire_tests EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tests/net/LobbyWireTests.cpp")
+target_link_libraries(faf_lobby_wire_tests PRIVATE faf_sim gtest_main)
+target_link_options(faf_lobby_wire_tests PRIVATE -Wl,--error-limit=0)
+add_test(NAME lobby_wire COMMAND faf_lobby_wire_tests)
+# The Win32 shim's handles when one thread closes what another still uses, its shell folders and
+# its shell deletes (Windows' behaviour).
 add_executable(faf_win32_shim_tests EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tests/linux/Win32ShimHandleTests.cpp"
-  "${PROJECT_SOURCE_DIR}/tests/linux/Win32ShimFolderTests.cpp")
+  "${PROJECT_SOURCE_DIR}/tests/linux/Win32ShimFolderTests.cpp"
+  "${PROJECT_SOURCE_DIR}/tests/linux/Win32ShimFileOperationTests.cpp")
 target_link_libraries(faf_win32_shim_tests PRIVATE faf_sim gtest_main)
 target_link_options(faf_win32_shim_tests PRIVATE -Wl,--error-limit=0)
 add_test(NAME win32_shim_handles COMMAND faf_win32_shim_tests)
@@ -545,6 +552,14 @@ add_executable(faf_lua_tests EXCLUDE_FROM_ALL ${_faf_lua_test_sources})
 target_link_libraries(faf_lua_tests PRIVATE faf_sim gtest_main)
 target_link_options(faf_lua_tests PRIVATE -Wl,--error-limit=0)
 add_test(NAME lua COMMAND faf_lua_tests)
+
+# The startup helpers' path tests (tests/startup), as Windows runs them: faf_sim compiles
+# moho/misc/StartupHelpers.cpp. StartupArgsTests.cpp swaps the MSVC CRT's __argc and __argv, which
+# only Windows' <cstdlib> declares.
+add_executable(faf_startup_tests EXCLUDE_FROM_ALL "${PROJECT_SOURCE_DIR}/tests/startup/StartupPathTests.cpp")
+target_link_libraries(faf_startup_tests PRIVATE faf_sim gtest_main)
+target_link_options(faf_startup_tests PRIVATE -Wl,--error-limit=0)
+add_test(NAME startup COMMAND faf_startup_tests)
 
 # --- faf_tests --------------------------------------------------------------------------
 # Every GoogleTest executable of the Linux build (cmake/FafTests.cmake).

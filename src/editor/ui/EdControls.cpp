@@ -42,11 +42,17 @@ namespace faf::editor
         }
         ++p;
       }
+      const auto unescape = [](std::string text) {
+        for (std::size_t at = text.find("%%"); at != std::string::npos; at = text.find("%%", at + 1)) {
+          text.erase(at, 1);
+        }
+        return text;
+      };
       if (*p == 0) {
-        name = format; // no number: the text whole ("Hard seam")
+        name = unescape(format); // no number: the text whole ("Hard seam")
         return;
       }
-      name.assign(format, static_cast<std::size_t>(p - format));
+      name = unescape(std::string(format, static_cast<std::size_t>(p - format)));
       while (!name.empty() && name.back() == ' ') {
         name.pop_back();
       }
@@ -792,5 +798,31 @@ namespace faf::editor
     va_start(args, format);
     TooltipV(format, args);
     va_end(args);
+  }
+
+  void SameLineIfFits(
+    const float width
+  )
+  {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float right = ImGui::GetCurrentWindowRead()->WorkRect.Max.x;
+    if (ImGui::GetItemRectMax().x + style.ItemSpacing.x + width <= right) {
+      ImGui::SameLine();
+    }
+  }
+
+  float CheckboxWidth(
+    const char* const label
+  )
+  {
+    const ImGuiStyle& style = ImGui::GetStyle();
+    return ImGui::GetFrameHeight() + style.ItemInnerSpacing.x + ImGui::CalcTextSize(label, nullptr, true).x;
+  }
+
+  float ButtonWidth(
+    const char* const label
+  )
+  {
+    return ImGui::CalcTextSize(label, nullptr, true).x + ImGui::GetStyle().FramePadding.x * 2.0f;
   }
 } // namespace faf::editor

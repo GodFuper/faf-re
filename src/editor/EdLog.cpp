@@ -2,6 +2,9 @@
 
 #include <cstring>
 #include "editor/ui/EdControls.h"
+#include "editor/ui/EdUiScale.h"
+
+#include <algorithm>
 
 #include <cstdio>
 
@@ -93,6 +96,17 @@ namespace faf::editor
       mMissionLive = message.c_str() + sizeof(kLive) - 1;
       return;
     }
+    // The Unit lab's Test in game: the unit under test, once a second.
+    static constexpr char kUnitTest[] = "EDUNITTEST live ";
+    if (std::strncmp(message.c_str(), kUnitTest, sizeof(kUnitTest) - 1) == 0) {
+      mUnitTestLive = message.c_str() + sizeof(kUnitTest) - 1;
+      return;
+    }
+    // Its notes (which builder builds it, none does, no second army): kept for the panel and shown.
+    static constexpr char kUnitTestNote[] = "EDUNITTEST note ";
+    if (std::strncmp(message.c_str(), kUnitTestNote, sizeof(kUnitTestNote) - 1) == 0) {
+      mUnitTestNote = message.c_str() + sizeof(kUnitTestNote) - 1;
+    }
     mLines.push_back(Line{level, std::string(message.c_str()), seconds});
     if (mTimesFile != nullptr) {
       std::fprintf(mTimesFile, "%9.3f %s\n", seconds, message.c_str());
@@ -135,15 +149,19 @@ namespace faf::editor
 
   void EdLog::Draw()
   {
-    ImGui::SetNextItemWidth(-560.0f);
+    // The filter takes what the controls after it leave (at least 12 em); they wrap when the panel is narrower.
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float controls = CheckboxWidth("Info") + CheckboxWidth("Warnings") + CheckboxWidth("Debug") +
+      ButtonWidth("Copy") + CheckboxWidth("Times") + CheckboxWidth("Follow") + ButtonWidth("Clear") + spacing * 7.0f;
+    ImGui::SetNextItemWidth(std::max(Em(12.0f), ImGui::GetContentRegionAvail().x - controls));
     ImGui::InputTextWithHint("##filter", "Filter", mFilter, sizeof(mFilter));
-    ImGui::SameLine();
+    SameLineIfFits(CheckboxWidth("Info"));
     ImGui::Checkbox("Info", &mShowInfo);
-    ImGui::SameLine();
+    SameLineIfFits(CheckboxWidth("Warnings"));
     ImGui::Checkbox("Warnings", &mShowWarnings);
-    ImGui::SameLine();
+    SameLineIfFits(CheckboxWidth("Debug"));
     ImGui::Checkbox("Debug", &mShowDebug);
-    ImGui::SameLine();
+    SameLineIfFits(ButtonWidth("Copy"));
     if (ImGui::Button("Copy")) {
       // The lines shown (filter and levels), as text.
       const std::lock_guard<std::mutex> lock(mMutex);
@@ -158,14 +176,14 @@ namespace faf::editor
     if (ImGui::IsItemHovered()) {
       EdSetTooltip("The lines shown, to the clipboard");
     }
-    ImGui::SameLine();
+    SameLineIfFits(CheckboxWidth("Times"));
     ImGui::Checkbox("Times", &mShowTimes);
     if (ImGui::IsItemHovered()) {
       EdSetTooltip("Each line's time, in seconds since the editor started");
     }
-    ImGui::SameLine();
+    SameLineIfFits(CheckboxWidth("Follow"));
     ImGui::Checkbox("Follow", &mAutoScroll);
-    ImGui::SameLine();
+    SameLineIfFits(ButtonWidth("Clear"));
     if (ImGui::Button("Clear")) {
       const std::lock_guard<std::mutex> lock(mMutex);
       mLines.clear();
@@ -262,6 +280,32 @@ namespace faf::editor
     default:
       return mShowInfo;
     }
+  }
+
+  bool EdLog::TakeUnitTestNote(
+    std::string& out
+  )
+  {
+    const std::lock_guard<std::mutex> lock(mMutex);
+    if (mUnitTestNote.empty()) {
+      return false;
+    }
+    out.swap(mUnitTestNote);
+    mUnitTestNote.clear();
+    return true;
+  }
+
+  bool EdLog::TakeUnitTestLive(
+    std::string& out
+  )
+  {
+    const std::lock_guard<std::mutex> lock(mMutex);
+    if (mUnitTestLive.empty()) {
+      return false;
+    }
+    out.swap(mUnitTestLive);
+    mUnitTestLive.clear();
+    return true;
   }
 
   bool EdLog::TakeMissionLive(

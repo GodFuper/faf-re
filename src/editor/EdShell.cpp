@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 
 #include "editor/EdLog.h"
 #include "editor/EdPlay.h"
@@ -69,7 +70,7 @@ namespace faf::editor
   namespace
   {
     // The panels' scales the toolbar's - and + (and Ctrl+- / Ctrl+=) step between.
-    constexpr float kUiScaleSteps[] = {0.75f, 0.85f, 1.0f, 1.1f, 1.25f, 1.4f, 1.6f, 1.8f, 2.0f};
+    constexpr float kUiScaleSteps[] = {kMinUiScale, 0.85f, 1.0f, 1.1f, 1.25f, 1.4f, kMaxUiScale};
   } // namespace
 
   void EdShell::StepUiScale(
@@ -593,6 +594,18 @@ namespace faf::editor
       if (mShowMesh) {
         DrawMeshPanel();
       }
+      if (mShowDetail) {
+        DrawDetailPanel();
+      }
+      if (mShowUnitWizard) {
+        mUnitWizard.Draw(mShowUnitWizard);
+      }
+      if (mShowPaths) {
+        mPathsPanel.Draw(mShowPaths, mDocument.Map() != nullptr);
+      } else {
+        // The view edits paths only while the panel is up.
+        mPathsPanel.State().editing = false;
+      }
       mUnitViewer.Frame();
       DrawViewMenu();
       if (std::string effect; mAssets.TakeEffectAsk(effect)) {
@@ -833,6 +846,9 @@ namespace faf::editor
       {"Statistics###Statistics", &EdShell::mShowStatistics},
       {"Images###Images", &EdShell::mShowImages},
       {"Mesh terrain###MeshTerrain", &EdShell::mShowMesh},
+      {"Paths###Paths", &EdShell::mShowPaths},
+      {"Detail pass###DetailPass", &EdShell::mShowDetail},
+      {"New unit###UnitWizard", &EdShell::mShowUnitWizard},
     };
     return kFlags;
   }
@@ -845,6 +861,49 @@ namespace faf::editor
     }
     if (mCommands == nullptr || !ImGui::BeginPopup("##viewmenu")) {
       return;
+    }
+    using Kind = ViewMenuAction::Kind;
+    const ViewMenuPoint& at = mViewMenuPoint;
+    const auto act = [this](const Kind kind, std::string arg = {}, std::vector<std::string> path = {}) {
+      mViewMenuAction = {kind, std::move(arg), std::move(path)};
+    };
+    // The header (FAF Studio's menus.lua): where, how high, and what stands there.
+    if (at.valid) {
+      ImGui::TextDisabled(
+        "%.1f, %.1f  height %.2f", static_cast<double>(at.x), static_cast<double>(at.z), static_cast<double>(at.height)
+      );
+      if (!at.what.empty()) {
+        ImGui::TextUnformatted(at.what.c_str());
+      }
+      ImGui::Separator();
+    }
+    // Its own entries: a resource to its build grid; a unit to another army or group.
+    if (at.markerType == "Mass" || at.markerType == "Hydrocarbon") {
+      if (ImGui::MenuItem("Snap to the build grid")) {
+        act(Kind::SnapToGrid, at.marker);
+      }
+    }
+    if (!at.unitName.empty()) {
+      if (ImGui::BeginMenu("Set army")) {
+        for (const std::string& army : at.armies) {
+          if (ImGui::MenuItem(army.c_str(), nullptr, army == at.unitArmy, army != at.unitArmy)) {
+            act(Kind::SetArmy, army);
+          }
+        }
+        ImGui::EndMenu();
+      }
+      if (ImGui::BeginMenu("Move to group")) {
+        for (const std::vector<std::string>& path : at.groups) {
+          std::string label;
+          for (const std::string& part : path) {
+            label += (label.empty() ? "" : " / ") + part;
+          }
+          if (ImGui::MenuItem(label.empty() ? "(the army's root)" : label.c_str())) {
+            act(Kind::MoveToGroup, at.unitArmy, path);
+          }
+        }
+        ImGui::EndMenu();
+      }
     }
     for (const std::string& id : ViewMenuCommands(mViewMenuSelection)) {
       if (id.empty()) {
@@ -863,6 +922,42 @@ namespace faf::editor
         EdSetTooltip("%s", why.c_str());
       }
     }
+    // Things put at the point.
+    if (at.valid && mDocument.GetState() == EdDocument::State::Open) {
+      ImGui::Separator();
+      if (ImGui::BeginMenu("Place marker here")) {
+        std::string group;
+        for (const MarkerType& type : MarkerTypes()) {
+          if (group != type.group) {
+            group = type.group;
+            ImGui::SeparatorText(group.c_str());
+          }
+          if (ImGui::MenuItem(type.type)) {
+            act(Kind::PlaceMarker, type.type);
+          }
+        }
+        ImGui::EndMenu();
+      }
+      if (ImGui::MenuItem("Add start position here")) {
+        act(Kind::PlaceMarker, "Blank Marker");
+      }
+      if (ImGui::MenuItem("Add area here")) {
+        act(Kind::AddArea);
+      }
+      if (!at.unitToPlace.empty() && ImGui::MenuItem(("Place " + at.unitToPlace + " here").c_str())) {
+        act(Kind::PlaceUnit);
+      }
+      if (!at.propToPlace.empty()) {
+        const std::size_t slash = at.propToPlace.find_last_of('/');
+        const std::string name = slash == std::string::npos ? at.propToPlace : at.propToPlace.substr(slash + 1);
+        if (ImGui::MenuItem(("Place " + name + " here").c_str())) {
+          act(Kind::PlaceProp);
+        }
+      }
+      if (ImGui::MenuItem("Focus the camera here")) {
+        act(Kind::FocusHere);
+      }
+    }
     ImGui::EndPopup();
   }
 
@@ -876,6 +971,29 @@ namespace faf::editor
       }
     }
     return nullptr;
+  }
+
+  std::vector<std::string> EdShell::PanelWindows() const
+  {
+    // The names the panels' Begin uses now (icon in front, the workspace after the id), as ImGui knows the windows.
+    std::vector<std::string> out;
+    for (const PanelFlag& flag : PanelFlags()) {
+      out.push_back(PanelWindowName(flag.window, ActiveWorkspace()));
+    }
+    return out;
+  }
+
+  bool EdShell::ShowPanelWindow(
+    const std::string& window,
+    const bool on
+  )
+  {
+    for (const PanelFlag& flag : PanelFlags()) {
+      if (window == PanelWindowName(flag.window, ActiveWorkspace())) {
+        return std::exchange(this->*flag.shown, on);
+      }
+    }
+    return false;
   }
 
   std::vector<std::string> EdShell::ShownPanelIds() const
@@ -895,6 +1013,17 @@ namespace faf::editor
   {
     for (const PanelFlag& flag : PanelFlags()) {
       this->*flag.shown = std::find(ids.begin(), ids.end(), PanelId(flag.window)) != ids.end();
+    }
+  }
+
+  void EdShell::ApplyShownPanels()
+  {
+    // A named layout was just read (ImGui's settings, the [FafEditor] Panels.<key> lines with them): the active
+    // workspace shows the panels it lists, before this frame's own list is kept over it.
+    const auto saved = ShownPanels().find(Workspaces()[static_cast<std::size_t>(ActiveWorkspace())].key);
+    if (saved != ShownPanels().end()) {
+      ShowPanels(saved->second);
+      gpg::Logf("editor: layout: %zu panels shown in this workspace", saved->second.size());
     }
   }
 
@@ -2758,6 +2887,50 @@ namespace faf::editor
     if (ImGui::RadioButton("Campaign", mNewMap.campaign)) {
       mNewMap.campaign = true;
     }
+    // Any size (FAF Studio's custom map): a playable area of any km in the terrain that holds it.
+    bool anySize = mNewMap.widthKm > 0.0f;
+    ImGui::TextUnformatted("Any size");
+    ImGui::SameLine(Em(110.0f));
+    if (ImGui::Checkbox("##anysize", &anySize)) {
+      mNewMap.widthKm = anySize ? 7.5f : 0.0f;
+      mNewMap.depthKm = anySize ? 7.5f : 0.0f;
+    }
+    if (anySize) {
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(Em(70.0f));
+      FillDragFloat("##widthkm", &mNewMap.widthKm, 0.1f, 1.0f, 80.0f, "%.1f km");
+      ImGui::SameLine();
+      ImGui::TextUnformatted("x");
+      ImGui::SameLine();
+      ImGui::SetNextItemWidth(Em(70.0f));
+      FillDragFloat("##depthkm", &mNewMap.depthKm, 0.1f, 1.0f, 80.0f, "%.1f km");
+      for (const float preset : {7.5f, 15.0f, 30.0f}) {
+        ImGui::SameLine();
+        char label[16];
+        (void)std::snprintf(label, sizeof(label), "%g", static_cast<double>(preset));
+        if (ImGui::SmallButton(label)) {
+          mNewMap.widthKm = mNewMap.depthKm = preset;
+        }
+      }
+      const std::optional<std::array<int, 4>> area = NewMapPlayable(mNewMap);
+      const int tw = NewMapWidth(mNewMap);
+      const int td = NewMapDepth(mNewMap);
+      if (area) {
+        const int w = (*area)[2] - (*area)[0];
+        const int d = (*area)[3] - (*area)[1];
+        ImGui::TextDisabled(
+          "Terrain %d x %d; the playable area %d x %d in its middle (%d%% of it); starts inside the area.",
+          tw,
+          td,
+          w,
+          d,
+          static_cast<int>(100.0 * w * d / (static_cast<double>(tw) * td))
+        );
+      } else {
+        ImGui::TextDisabled("Terrain %d x %d, all of it playable.", tw, td);
+      }
+    }
+    ImGui::BeginDisabled(anySize);
     ImGui::TextUnformatted("Size");
     ImGui::SameLine(Em(110.0f));
     for (int i = 0; i < kNewMapSizeCount; ++i) {
@@ -2782,6 +2955,7 @@ namespace faf::editor
       }
       ImGui::PopID();
     }
+    ImGui::EndDisabled();
     ImGui::SetNextItemWidth(kWidth);
     FillSliderInt("Players", &mNewMap.players, 1, kNewMapMaxPlayers);
     ImGui::SetNextItemWidth(kWidth);

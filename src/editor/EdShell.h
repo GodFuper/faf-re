@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdio>
+#include <functional>
 #include <map>
 #include <string>
 #include <utility>
@@ -9,6 +10,7 @@
 #include "editor/ui/EdFieldsPanel.h"
 #include "editor/doc/EdLuaApi.h"
 #include "editor/EdTools.h"
+#include "editor/tools/EdMeshData.h"
 #include "editor/doc/EdAdaptiveModel.h"
 #include "editor/tools/EdChecks.h"
 #include "editor/doc/EdLighting.h"
@@ -26,6 +28,9 @@
 #include "editor/ui/EdModHost.h"
 #include "editor/ui/EdUnitViewer.h"
 #include "editor/ui/EdUnitLabPanel.h"
+#include "editor/ui/EdPathsPanel.h"
+#include "editor/ui/EdUnitWizardPanel.h"
+#include "editor/tools/EdDetailPass.h"
 #include "editor/ui/EdMaterialEditor.h"
 #include "editor/ui/EdParticleEditor.h"
 #include "imgui.h"
@@ -168,6 +173,57 @@ namespace faf::editor
     {
       return mMissionPanel;
     }
+    [[nodiscard]] EdPathsPanel& PathsPanel() noexcept
+    {
+      return mPathsPanel;
+    }
+    [[nodiscard]] EdUnitWizardPanel& UnitWizard() noexcept
+    {
+      return mUnitWizard;
+    }
+    /** Terrain > Paths: the Paths panel up, editing on the map on. */
+    void ShowPaths() noexcept
+    {
+      mShowPaths = true;
+    }
+    void ShowDetail() noexcept
+    {
+      mShowDetail = true;
+    }
+    /** The Detail pass panel's ask (1 plan, 2 run, 3 measure; 0 none) and its run settings; the app answers with
+     * SetDetailText. `environment` empty: the panel wants the map's guess. */
+    int TakeDetailAsk(
+      DetailRun& run
+    ) noexcept
+    {
+      run = mDetailRun;
+      run.only.clear();
+      return std::exchange(mDetailAsk, 0);
+    }
+    void SetDetailText(
+      std::string text
+    )
+    {
+      mDetailText = std::move(text);
+    }
+    /** The map's guessed environment, once a map is open (the panel's default). */
+    void SetDetailEnvironment(
+      const std::string& environment
+    )
+    {
+      if (!mDetailEnvironmentSet) {
+        mDetailRun.environment = environment;
+        mDetailEnvironmentSet = true;
+      }
+    }
+    void ResetDetailEnvironment() noexcept
+    {
+      mDetailEnvironmentSet = false;
+    }
+    [[nodiscard]] const std::vector<std::string>& DetailClassesOff() const noexcept
+    {
+      return mDetailClassesOff;
+    }
     [[nodiscard]] EdModPanel& ModPanel() noexcept
     {
       return mModPanel;
@@ -302,6 +358,35 @@ namespace faf::editor
     {
       mLookSwatches[id] = swatch;
     }
+    /** A look's picture (this map painted under its light, FAF Studio's look thumbnails); 0 = it can't be drawn. */
+    void SetLookThumb(
+      const std::string& id,
+      const std::uint64_t image
+    )
+    {
+      mLookThumbs[id] = image;
+    }
+    /** The next look whose row is on screen without its picture. */
+    [[nodiscard]] bool TakeLookThumbWanted(
+      std::string& id
+    )
+    {
+      if (mLookThumbWanted.empty()) {
+        return false;
+      }
+      id = mLookThumbWanted.front();
+      mLookThumbWanted.erase(mLookThumbWanted.begin());
+      return true;
+    }
+    /** Redraw pictures was pressed (the map changed under them). */
+    [[nodiscard]] bool TakeLookThumbsRedraw() noexcept
+    {
+      const bool redraw = mLookThumbsRedraw;
+      mLookThumbsRedraw = false;
+      return redraw;
+    }
+    /** Lets every look picture go (another map, or a redraw). */
+    void ClearLookThumbs();
     [[nodiscard]] bool LookTrying() const noexcept
     {
       return !mLookTried.empty();
@@ -358,6 +443,8 @@ namespace faf::editor
      * the first time). The panels shown in the one left are kept for it.
      */
     void SwitchWorkspace(int workspace);
+    /** After a named layout is read: the active workspace shows the panels the layout lists for it. */
+    void ApplyShownPanels();
     /**
      * The start screen (design §8 Files) over the panels: `page` 0 Home, 1 On this computer, 2 FAF vault. File > Open
      * and every "Open a map..." show its pages; a map opening, a workspace tab or Continue put it away.
@@ -533,6 +620,27 @@ namespace faf::editor
       mImageAsks.erase(mImageAsks.begin());
       return true;
     }
+    /** The Images panel's previews (an ImTextureID each, 0 = none): the rows on screen ask, the app makes them. */
+    void SetImageThumb(
+      const std::string& what,
+      const std::uint64_t image
+    )
+    {
+      mImageThumbs[what] = image;
+    }
+    [[nodiscard]] bool TakeImageThumbWanted(
+      std::string& what
+    )
+    {
+      if (mImageThumbWanted.empty()) {
+        return false;
+      }
+      what = mImageThumbWanted.front();
+      mImageThumbWanted.erase(mImageThumbWanted.begin());
+      return true;
+    }
+    /** Lets every preview go (the map changed under them). */
+    void ClearImageThumbs();
     void SetImageStatus(
       std::string status
     )
@@ -545,7 +653,54 @@ namespace faf::editor
       bool import = false;
       std::string file;
       MeshImportOptions options;
+      /** The scenario names the manifest: the map becomes a mesh terrain map. */
+      bool makeMeshMap = false;
     };
+    /** The mesh terrain view's mode (0 the height field, 1 the mesh, 2 both) and its other asks. */
+    int mMeshMode = 1;
+    bool mMeshMakeMap = true;
+    int mMeshAskMore = 0; // 1 load again, 2 check, 3 save the manifest, 4 unset, 5 set
+    edmesh::MeshMap* mMeshMapView = nullptr;
+    int mMeshMaterial = 0;
+    void SetMeshMapView(
+      edmesh::MeshMap* mesh
+    ) noexcept
+    {
+      mMeshMapView = mesh;
+    }
+    std::vector<std::string> mMeshFindings;
+    [[nodiscard]] int MeshMode() const noexcept
+    {
+      return mMeshMode;
+    }
+    [[nodiscard]] int TakeMeshMore() noexcept
+    {
+      return std::exchange(mMeshAskMore, 0);
+    }
+    /** Test runs: the panel's Load / Check / Save / Unset / Set (1..5). */
+    void AskMeshMore(
+      const int ask
+    ) noexcept
+    {
+      mMeshAskMore = ask;
+    }
+    void SetMeshFindings(
+      std::vector<std::string> findings
+    )
+    {
+      mMeshFindings = std::move(findings);
+    }
+    /** An import asked for from outside the panel (`/meshtest`), as its Import button asks after the file dialog. */
+    void AskMeshImport(
+      const std::string& file,
+      const bool makeMeshMap
+    )
+    {
+      mMeshAsk = MeshAsk{};
+      mMeshAsk.import = true;
+      mMeshAsk.file = file;
+      mMeshAsk.makeMeshMap = makeMeshMap;
+    }
     [[nodiscard]] bool TakeMeshAsk(
       MeshAsk& out
     )
@@ -583,13 +738,68 @@ namespace faf::editor
     {
       mShowUnitViewer = true;
     }
+    /** Where the view's menu was opened, and what stands there (the app fills it from the view). */
+    struct ViewMenuPoint
+    {
+      bool valid = false;
+      float x = 0.0f;
+      float z = 0.0f;
+      float height = 0.0f;
+      std::string what;
+      std::string marker;
+      std::string markerType;
+      std::string unitArmy;
+      std::string unitName;
+      std::vector<std::string> armies;              // for Set army
+      std::vector<std::vector<std::string>> groups; // the unit's army's groups, for Move to group
+      std::string unitToPlace;                      // the Units tool's unit
+      std::string propToPlace;                      // the Props tool's prop
+    };
+    /** An entry of the menu that acts at its point (the app runs it). */
+    struct ViewMenuAction
+    {
+      enum class Kind
+      {
+        None,
+        PlaceMarker, // arg: the type
+        AddArea,
+        PlaceUnit,
+        PlaceProp,
+        FocusHere,
+        SnapToGrid,
+        SetArmy, // arg: the army
+        MoveToGroup,
+      } kind = Kind::None;
+      std::string arg;
+      std::vector<std::string> path;
+    };
     /** The view's context menu, at the mouse, the next frame (ViewMenuCommands). */
     void OpenViewMenu(
       const bool selection
+    )
+    {
+      OpenViewMenu(selection, ViewMenuPoint());
+    }
+    void OpenViewMenu(
+      const bool selection,
+      ViewMenuPoint point
     ) noexcept
     {
       mViewMenuAsk = true;
       mViewMenuSelection = selection;
+      mViewMenuPoint = std::move(point);
+    }
+    [[nodiscard]] bool TakeViewMenuAction(
+      ViewMenuPoint& point,
+      ViewMenuAction& action
+    )
+    {
+      if (mViewMenuAction.kind == ViewMenuAction::Kind::None) {
+        return false;
+      }
+      point = mViewMenuPoint;
+      action = std::exchange(mViewMenuAction, {});
+      return true;
     }
 
   private:
@@ -615,6 +825,10 @@ namespace faf::editor
   public:
     /** A panel's shown flag by its id (`Properties`, `MissionStages`, `UnitLab`), or null. */
     [[nodiscard]] bool* PanelShown(std::string_view id);
+    /** Every panel's window name (as its Begin has it), for the QA runs that walk the panels. */
+    [[nodiscard]] std::vector<std::string> PanelWindows() const;
+    /** Shows or hides a panel by its window name; whether it was shown before. */
+    bool ShowPanelWindow(const std::string& window, bool on);
 
   private:
     /** The workspaces whose dock space has been laid out this run. */
@@ -652,6 +866,7 @@ namespace faf::editor
     bool mShowMissionPlatoons = false;
     bool mShowModProject = false;
     bool mShowUnitLab = false;
+    bool mShowUnitWizard = false;
     bool mShowAssets = false;
     bool mShowEditorMods = false;
     bool mShowUnitViewer = false;
@@ -659,13 +874,25 @@ namespace faf::editor
     bool mShowStatistics = false;
     bool mShowImages = false;
     bool mShowMesh = false;
+    bool mShowPaths = false;
+    bool mShowDetail = false;
+    void DrawDetailPanel();
+    DetailRun mDetailRun;
+    bool mDetailEnvironmentSet = false;
+    std::vector<std::string> mDetailClassesOff;
+    std::string mDetailText;
+    int mDetailAsk = 0; // 1 plan, 2 run, 3 measure
     char mMeshFile[512] = {};
     MeshImportOptions mMeshOptions;
     bool mMeshShown = true;
     std::string mMeshStatus;
     std::string mImageStatus;
+    std::map<std::string, std::uint64_t> mImageThumbs;
+    std::vector<std::string> mImageThumbWanted;
     EdFieldsPanel mFieldsPanel;
     bool mViewMenuAsk = false;
+    ViewMenuPoint mViewMenuPoint;
+    ViewMenuAction mViewMenuAction;
     char mSaveAsParent[512] = {};
     /** Map info's fields being typed in: key -> text (the scenario's value otherwise). */
     std::map<std::string, std::string> mInfoEdits;
@@ -693,6 +920,8 @@ namespace faf::editor
     int mTourStep = -1;
     bool mShowHome = false;
     bool mHomeFocusSearch = false;
+    /** The start screen's tip (FAF Studio's tips.lua): its number, -1 until the first is picked by the clock. */
+    int mHomeTip = -1;
     bool mHomeFront = false;
     int mHomePage = 0;
     char mHomeSearch[128] = {};
@@ -874,6 +1103,10 @@ namespace faf::editor
     std::string mLookStatus;
     std::vector<std::string> mMyLooks;
     std::map<std::string, LookSwatch> mLookSwatches;
+    std::map<std::string, std::uint64_t> mLookThumbs;
+    std::vector<std::string> mLookThumbWanted;
+    bool mLookThumbsShown = true;
+    bool mLookThumbsRedraw = false;
     char mLookSaveName[64]{};
     void DrawLooks();
     bool mSkyboxExport = false;
@@ -886,6 +1119,16 @@ namespace faf::editor
     std::string mScriptMessage;
     int mScriptErrorLine = 0;
     void RunCheck();
+
+  public:
+    /**
+     * The Check's resource part through the game's build rules (FAF Studio's validate.lua "blocked"): each mass and
+     * hydrocarbon marker tested with its building's footprint (slope, water, playable area, units, props). Set by the
+     * app (the view's unit fit).
+     */
+    std::function<std::vector<CheckIssue>()> resourceFit;
+
+  private:
     /** The pathing part of the Check: what each start reaches by land, and the overlay. */
     void CheckPathing(const MarkerCheckInput& input);
     bool mShowCheck = true;
@@ -941,8 +1184,10 @@ namespace faf::editor
     EdGenerate mGenerate;
     EdLayoutPanel mLayoutPanel{mDocument};
     EdMissionPanel mMissionPanel{mDocument};
+    EdPathsPanel mPathsPanel{mDocument};
     EdModPanel mModPanel{mDocument};
     EdUnitLabPanel mUnitLab{mModPanel};
+    EdUnitWizardPanel mUnitWizard{mModPanel};
     EdAssetBrowser mAssets{mTools};
     EdModHost mModHost{mDocument};
     EdUnitViewer mUnitViewer{mUnitLab, mModPanel};
