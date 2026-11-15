@@ -63,6 +63,8 @@ struct IconVertex
     float4 color : COLOR0;
     float2 uv : TEXCOORD0;
     float2 localPos : TEXCOORD1;
+    nointerpolation float4 slotUv : TEXCOORD2;
+    nointerpolation float2 texelStep : TEXCOORD3;
     nointerpolation uint layer : BLENDINDICES0;
     nointerpolation uint healthShield : BLENDINDICES1;
 };
@@ -70,6 +72,15 @@ struct IconVertex
 float4 UnpackArgb(uint argb)
 {
     return float4((argb >> 16) & 0xFF, (argb >> 8) & 0xFF, argb & 0xFF, argb >> 24) / 255.0;
+}
+
+float SampleIconAlpha(float2 uv, float4 slotUv)
+{
+    if (uv.x < slotUv.x || uv.x > slotUv.x + slotUv.z || uv.y < slotUv.y || uv.y > slotUv.y + slotUv.w)
+    {
+        return 0.0;
+    }
+    return Atlas.SampleLevel(PointSampler, uv, 0).a;
 }
 
 IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_InstanceID)
@@ -97,18 +108,23 @@ IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_Ins
             output.color = float4(0.0, 0.0, 0.0, 0.0);
             output.uv = float2(0.0, 0.0);
             output.localPos = float2(0.0, 0.0);
+            output.slotUv = float4(0.0, 0.0, 0.0, 0.0);
+            output.texelStep = float2(0.0, 0.0);
             return output;
         }
 
         IconSlot slot = Slots[baseSlot];
-        float2 halfSize = slot.halfSize * 1.45;
+        float2 pad = float2(4.0, 4.0);
+        float2 halfSize = slot.halfSize + pad;
         float2 screen = float2(unitUv.x != 0.0 ? center.x + halfSize.x : center.x - halfSize.x,
                                unitUv.y != 0.0 ? center.y + halfSize.y : center.y - halfSize.y);
 
         output.position = mul(float4(screen, 0.0, 1.0), Composite);
         output.color = float4(1.0, 1.0, 1.0, 1.0);
-        output.uv = float2(0.0, 0.0);
-        output.localPos = unitUv * 2.0 - 1.0;
+        output.uv = slot.uv.xy + slot.uv.zw * (0.5 + (unitUv - 0.5) * (halfSize / slot.halfSize));
+        output.localPos = (unitUv * 2.0 - 1.0) * halfSize;
+        output.slotUv = slot.uv;
+        output.texelStep = slot.uv.zw / (slot.halfSize * 2.0);
         return output;
     }
 
@@ -121,6 +137,8 @@ IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_Ins
         output.color = float4(0.0, 0.0, 0.0, 0.0);
         output.uv = float2(0.0, 0.0);
         output.localPos = float2(0.0, 0.0);
+        output.slotUv = float4(0.0, 0.0, 0.0, 0.0);
+        output.texelStep = float2(0.0, 0.0);
         return output;
     }
 
@@ -134,6 +152,8 @@ IconVertex StrategicIconVS(uint vertexId : SV_VertexID, uint instanceId : SV_Ins
     output.color = UnpackArgb(layer == 1 ? icon.color : 0xFFFFFFFF);
     output.uv = slot.uv.xy + slot.uv.zw * unitUv;
     output.localPos = unitUv * 2.0 - 1.0;
+    output.slotUv = float4(0.0, 0.0, 0.0, 0.0);
+    output.texelStep = float2(0.0, 0.0);
     return output;
 }
 
@@ -150,7 +170,7 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
         return color;
     }
 
-    // Layer 4: Procedural HP and Shield outline
+    // Layer 4: Procedural HP and Shield outline hugging icon silhouette
     if (OutlineMode == 0)
     {
         discard;
@@ -165,8 +185,42 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
         discard;
     }
 
-    float r = length(input.localPos);
-    if (r > 1.05 || r < 0.55)
+    // Pixels inside the base icon sprite are skipped (rendered by base layer 1)
+    float centerAlpha = SampleIconAlpha(input.uv, input.slotUv);
+    if (centerAlpha > 0.3)
+    {
+        discard;
+    }
+
+    float2 step = input.texelStep;
+
+    // Inner band (radius 1 texel): HP outline directly hugging the icon silhouette
+    float aN  = SampleIconAlpha(input.uv + float2( 0.0, -1.0) * step, input.slotUv);
+    float aS  = SampleIconAlpha(input.uv + float2( 0.0,  1.0) * step, input.slotUv);
+    float aW  = SampleIconAlpha(input.uv + float2(-1.0,  0.0) * step, input.slotUv);
+    float aE  = SampleIconAlpha(input.uv + float2( 1.0,  0.0) * step, input.slotUv);
+    float aNW = SampleIconAlpha(input.uv + float2(-1.0, -1.0) * step, input.slotUv);
+    float aNE = SampleIconAlpha(input.uv + float2( 1.0, -1.0) * step, input.slotUv);
+    float aSW = SampleIconAlpha(input.uv + float2(-1.0,  1.0) * step, input.slotUv);
+    float aSE = SampleIconAlpha(input.uv + float2( 1.0,  1.0) * step, input.slotUv);
+    float maxA1 = max(max(max(aN, aS), max(aW, aE)), max(max(aNW, aNE), max(aSW, aSE)));
+
+    // Outer band (radius 2 texels): Shield outline
+    float maxA2 = 0.0;
+    if (ShowShield != 0 && shieldFrac > 0.0)
+    {
+        float aN2  = SampleIconAlpha(input.uv + float2( 0.0, -2.0) * step, input.slotUv);
+        float aS2  = SampleIconAlpha(input.uv + float2( 0.0,  2.0) * step, input.slotUv);
+        float aW2  = SampleIconAlpha(input.uv + float2(-2.0,  0.0) * step, input.slotUv);
+        float aE2  = SampleIconAlpha(input.uv + float2( 2.0,  0.0) * step, input.slotUv);
+        float aNW2 = SampleIconAlpha(input.uv + float2(-1.5, -1.5) * step, input.slotUv);
+        float aNE2 = SampleIconAlpha(input.uv + float2( 1.5, -1.5) * step, input.slotUv);
+        float aSW2 = SampleIconAlpha(input.uv + float2(-1.5,  1.5) * step, input.slotUv);
+        float aSE2 = SampleIconAlpha(input.uv + float2( 1.5,  1.5) * step, input.slotUv);
+        maxA2 = max(max(max(aN2, aS2), max(aW2, aE2)), max(max(aNW2, aNE2), max(aSW2, aSE2)));
+    }
+
+    if (maxA1 <= 0.3 && maxA2 <= 0.3)
     {
         discard;
     }
@@ -180,27 +234,27 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     }
     float normAngle = angle / kTwoPi;
 
-    float dr = max(fwidth(r) * 1.5, 0.005);
-
-    // Inner band (r in [0.60, 0.85]): HP outline
-    float hpRadial = smoothstep(0.60 - dr, 0.60 + dr, r) * (1.0 - smoothstep(0.85 - dr, 0.85 + dr, r));
-    float hpAngleAlpha = 0.0;
-    if (OutlineMode == 1)
+    // HP outline determination
+    bool isHp = (maxA1 > 0.3);
+    float hpAlpha = 0.0;
+    if (isHp)
     {
-        hpAngleAlpha = 1.0;
-    }
-    else if (OutlineMode == 2 || OutlineMode == 3)
-    {
-        if (OutlineMode == 3 && healthFrac >= SmartCutoff)
+        if (OutlineMode == 1)
         {
-            hpAngleAlpha = 0.0;
+            hpAlpha = 1.0;
         }
-        else
+        else if (OutlineMode == 2 || OutlineMode == 3)
         {
-            hpAngleAlpha = (healthFrac > 0.0 && normAngle <= healthFrac) ? 1.0 : 0.0;
+            if (OutlineMode == 3 && healthFrac >= SmartCutoff)
+            {
+                hpAlpha = 0.0;
+            }
+            else
+            {
+                hpAlpha = (healthFrac > 0.0 && normAngle <= healthFrac) ? 1.0 : 0.0;
+            }
         }
     }
-    float hpAlpha = hpRadial * hpAngleAlpha;
 
     // HP color smoothly interpolated from ColorBad to ColorMed to ColorGood
     float4 cBad = UnpackArgb(ColorBad);
@@ -210,14 +264,13 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     float t = saturate((healthFrac - BadCutoff) / denom);
     float4 hpColor = t < 0.5 ? lerp(cBad, cMed, t * 2.0) : lerp(cMed, cGood, (t - 0.5) * 2.0);
 
-    // Outer band (r in [0.85, 1.00]): Shield outline
+    // Shield outline determination (band 2, outside HP band)
     float shieldAlpha = 0.0;
     float4 shieldColor = UnpackArgb(ColorShield);
-    if (ShowShield != 0 && shieldFrac > 0.0)
+    if (!isHp && maxA2 > 0.3 && ShowShield != 0 && shieldFrac > 0.0)
     {
-        float shieldRadial = smoothstep(0.85 - dr, 0.85 + dr, r) * (1.0 - smoothstep(1.00 - dr, 1.00 + dr, r));
         float shieldAngleAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
-        shieldAlpha = shieldRadial * shieldAngleAlpha;
+        shieldAlpha = shieldAngleAlpha;
     }
 
     float totalAlpha = saturate(hpAlpha + shieldAlpha);
