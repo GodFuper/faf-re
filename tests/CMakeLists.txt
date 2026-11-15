@@ -88,6 +88,13 @@ set_target_properties(faf_strategic_icon_outline_lua_binding_tests PROPERTIES FO
 add_test(NAME StrategicIconOutlineLuaBindingTest COMMAND faf_strategic_icon_outline_lua_binding_tests)
 set_tests_properties(StrategicIconOutlineLuaBindingTest PROPERTIES LABELS "Render")
 
+add_executable(faf_strategic_icon_instance_packing_tests EXCLUDE_FROM_ALL render/StrategicIconInstancePackingTests.cpp)
+target_include_directories(faf_strategic_icon_instance_packing_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(faf_strategic_icon_instance_packing_tests PRIVATE faf_engine gtest_main)
+set_target_properties(faf_strategic_icon_instance_packing_tests PROPERTIES FOLDER "Tests/Render")
+add_test(NAME StrategicIconInstancePackingTest COMMAND faf_strategic_icon_instance_packing_tests)
+set_tests_properties(StrategicIconInstancePackingTest PROPERTIES LABELS "Render")
+
 # Engine addition: EffectScan.h against the std::regex patterns it replaced, on generated text.
 # The SFD movie header parser on synthetic headers (moved from tools/sfd-inspect); no engine needed.
 add_executable(faf_sfd_parser_tests EXCLUDE_FROM_ALL movie/SfdHeaderParserTests.cpp

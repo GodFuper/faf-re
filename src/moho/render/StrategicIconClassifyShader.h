@@ -158,6 +158,7 @@ struct IconInstance
     uint color;
     uint layers01;
     uint layers23;
+    uint healthShield;
 };
 
 // IEEE single-precision 1 / x, rounded to nearest even: what the CPU's divss
@@ -286,6 +287,7 @@ void ClassifyIconsCS(uint3 thread : SV_DispatchThreadID)
     record.color = 0u;
     record.layers01 = 0xFFFFFFFFu;
     record.layers23 = 0xFFFFFFFFu;
+    record.healthShield = 0x0000FFFFu;
     bool blinkedOut = false;
     if ((source.flags & kFriendly) != 0u && source.lastFocusDamageTick != 0 && (FrameFlags & kBlinkHidden) != 0u)
     {

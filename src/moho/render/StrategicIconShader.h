@@ -30,6 +30,7 @@ struct IconInstance
     uint color;    // ARGB tint of the base icon
     uint layers01; // atlas slots of the underlay (low) and base icon (high); 0xFFFF = none
     uint layers23; // atlas slots of the paused (low) and stunned (high) overlays
+    uint healthShield; // health ratio (low 16 bits, unorm), shield ratio (high 16 bits, unorm)
 };
 
 struct IconSlot

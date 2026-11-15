@@ -2072,6 +2072,22 @@ namespace moho
       record.SetPosition(placement.mScreenX, placement.mScreenY);
       record.mColor = placement.mColor;
 
+      if (candidate.mData.mUnit != nullptr && !candidate.mData.mIsFormationGhost) {
+        UserEntity* const entity = candidate.mData.mUnit;
+        float shieldRatio = 0.0f;
+        if (const UserUnit* const unit = entity->IsUserUnit(); unit != nullptr) {
+          shieldRatio = unit->mUnitVarDat.mShieldRatio;
+        }
+        record.mHealthShield = StrategicIconInstance::PackHealthAndShield(
+          entity->mVariableData.mHealth,
+          entity->mVariableData.mMaxHealth,
+          shieldRatio,
+          candidate.mData.mIsFriendly
+        );
+      } else {
+        record.mHealthShield = 0x0000FFFFu; // 100% health, 0% shield
+      }
+
       // The textures `StoreStrategicIcon` would attach: the picked icon, and the paused and
       // stunned rest textures when the flags ask for them.
       const UnitIconData& icon = candidate.mData;

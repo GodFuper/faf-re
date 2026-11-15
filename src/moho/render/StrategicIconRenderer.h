@@ -54,14 +54,22 @@ namespace moho
     std::uint32_t mColor = 0U;    ///< ARGB tint of the base icon
     std::uint32_t mLayers01 = 0xFFFFFFFFU;
     std::uint32_t mLayers23 = 0xFFFFFFFFU;
+    std::uint32_t mHealthShield = 0U; ///< low 16 bits: health ratio (unorm16), high 16 bits: shield ratio (unorm16)
 
     static constexpr std::uint16_t kNoLayer = 0xFFFFU;
     static constexpr std::uint32_t kLayerCount = 4U; ///< underlay, base, paused, stunned
 
     void SetPosition(float screenX, float screenY) noexcept;
     void SetLayer(std::uint32_t layer, std::uint16_t slot) noexcept;
+
+    static std::uint32_t PackHealthAndShield(
+      float health,
+      float maxHealth,
+      float shieldRatio,
+      bool isFriendly
+    ) noexcept;
   };
-  static_assert(sizeof(StrategicIconInstance) == 16, "StrategicIconInstance must match IconInstance");
+  static_assert(sizeof(StrategicIconInstance) == 20, "StrategicIconInstance must match IconInstance");
 
   class StrategicIconRenderer
   {

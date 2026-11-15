@@ -93,6 +93,43 @@ namespace moho
     packed = (packed & ~(0xFFFFU << shift)) | (static_cast<std::uint32_t>(slot) << shift);
   }
 
+  std::uint32_t StrategicIconInstance::PackHealthAndShield(
+    const float health,
+    const float maxHealth,
+    const float shieldRatio,
+    const bool isFriendly
+  ) noexcept
+  {
+    const auto toUnorm16 = [](const float val) noexcept -> std::uint32_t {
+      if (std::isnan(val) || val <= 0.0f) {
+        return 0U;
+      }
+      if (val >= 1.0f) {
+        return 0xFFFFU;
+      }
+      return static_cast<std::uint32_t>(std::round(val * 65535.0f));
+    };
+
+    float healthFraction = 1.0f;
+    if (maxHealth > 0.0f) {
+      const float ratio = health / maxHealth;
+      if (!std::isnan(ratio)) {
+        healthFraction = std::clamp(ratio, 0.0f, 1.0f);
+      }
+    }
+
+    std::uint32_t shieldPacked = 0U;
+    if (isFriendly) {
+      shieldPacked = toUnorm16(shieldRatio);
+    } else {
+      // Enemy unit shield visibility in fog-of-war is strictly binary:
+      // if shield is active (> 0.0f), pack full 0xFFFFu, otherwise 0u.
+      shieldPacked = (!std::isnan(shieldRatio) && shieldRatio > 0.0f) ? 0xFFFFU : 0U;
+    }
+
+    return (shieldPacked << 16U) | (toUnorm16(healthFraction) & 0xFFFFU);
+  }
+
   StrategicIconRenderer& StrategicIconRenderer::Get()
   {
     static StrategicIconRenderer sRenderer;
