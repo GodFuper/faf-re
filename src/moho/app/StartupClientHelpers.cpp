@@ -62,6 +62,7 @@
 #include "moho/lua/CScrLuaBinder.h"
 #include "moho/lua/CScrLuaObjectFactory.h"
 #include "moho/misc/FileWaitHandleSet.h"
+#include "moho/sim/CWldSession.h"
 #include "moho/sim/CVFSImpl.h"
 #include "moho/misc/XFileError.h"
 #include "moho/render/textures/CD3DBatchTexture.h"
@@ -348,6 +349,7 @@ namespace
   constexpr char kGetMovieVolumeHelpText[] = "GetMovieVolume()";
   constexpr char kGetOptionsHelpText[] = "obj GetOptions()";
   constexpr char kGetPreferenceHelpText[] = "obj GetPreference(string, [default])";
+  constexpr char kGetStrategicIconOutlineConfigHelpText[] = "table GetStrategicIconOutlineConfig()";
   constexpr char kGetTextureDimensionsHelpText[] = "width, height GetTextureDimensions(filename, border = 1)";
   constexpr char kHasCommandLineArgHelpText[] = "HasCommandLineArg(option)";
   constexpr char kLuaExpectedArgRangeWarning[] = "%s\n  expected between %d and %d args, but got %d";
@@ -359,8 +361,43 @@ namespace
   constexpr char kSecondaryAdapterKey[] = "secondary_adapter";
   constexpr char kSetMovieVolumeHelpText[] = "SetMovieVolume(volume): 0.0 - 2.0";
   constexpr char kSetPreferenceHelpText[] = "SetPreference(string, obj)";
+  constexpr char kSetStrategicIconOutlineConfigHelpText[] = "SetStrategicIconOutlineConfig(table)";
   constexpr char kShadowQualityKey[] = "shadow_quality";
   constexpr char kWindowedModeKey[] = "windowed";
+
+  bool TryParseColor(const LuaPlus::LuaObject& obj, std::uint32_t& outColor)
+  {
+    if (obj.IsNumber()) {
+      const double num = obj.GetNumber();
+      if (num < 0.0) {
+        outColor = static_cast<std::uint32_t>(static_cast<std::int64_t>(num));
+      } else {
+        outColor = static_cast<std::uint32_t>(static_cast<std::uint64_t>(num));
+      }
+      return true;
+    }
+    if (obj.IsString()) {
+      const char* str = obj.GetString();
+      if (str != nullptr && *str != '\0') {
+        if (str[0] == '#') {
+          ++str;
+        } else if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X')) {
+          str += 2;
+        }
+        char* endPtr = nullptr;
+        const unsigned long long val = std::strtoull(str, &endPtr, 16);
+        if (endPtr != str) {
+          std::uint32_t parsed = static_cast<std::uint32_t>(val);
+          if ((parsed & 0xFF000000u) == 0 && std::strlen(str) <= 6) {
+            parsed |= 0xFF000000u;
+          }
+          outColor = parsed;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
   void RefreshFidelitySupportLanes(
     const gpg::gal::DeviceContext* const context
   )
@@ -1189,6 +1226,219 @@ int moho::cfunc_DebugFacilitiesEnabledL(
 }
 
 /**
+ * Lua C callback thunk that unwraps `lua_State*` and forwards to
+ * `cfunc_SetStrategicIconOutlineConfigL`.
+ */
+int moho::cfunc_SetStrategicIconOutlineConfig(
+  lua_State* const luaContext
+)
+{
+  return cfunc_SetStrategicIconOutlineConfigL(ResolveBindingLuaState(luaContext));
+}
+
+/**
+ * Returns/creates the global Lua binder definition for
+ * `SetStrategicIconOutlineConfig` in the user init set.
+ */
+moho::CScrLuaInitForm* moho::func_SetStrategicIconOutlineConfig_LuaFuncDef()
+{
+  static CScrLuaBinder binder(
+    moho::SCR_UserLuaInitSet(),
+    "SetStrategicIconOutlineConfig",
+    &moho::cfunc_SetStrategicIconOutlineConfig,
+    nullptr,
+    "<global>",
+    kSetStrategicIconOutlineConfigHelpText
+  );
+  return &binder;
+}
+
+/**
+ * Reads a configuration table from Lua and updates strategic icon outline settings.
+ */
+int moho::cfunc_SetStrategicIconOutlineConfigL(
+  LuaPlus::LuaState* const state
+)
+{
+  if (state == nullptr || state->m_state == nullptr) {
+    return 0;
+  }
+
+  const int argCount = lua_gettop(state->m_state);
+  if (argCount < 1) {
+    gpg::Warnf("SetStrategicIconOutlineConfig: expected 1 table argument");
+    return 0;
+  }
+
+  LuaPlus::LuaObject table(LuaPlus::LuaStackObject(state, 1));
+  if (!table.IsTable()) {
+    gpg::Warnf("SetStrategicIconOutlineConfig: argument 1 must be a table");
+    return 0;
+  }
+
+  StrategicIconOutlineConfig config = moho::GetStrategicIconOutlineConfig();
+
+  const LuaPlus::LuaObject modeObj = table["mode"];
+  if (modeObj.IsNumber()) {
+    const int modeVal = modeObj.GetInteger();
+    if (modeVal >= 0 && modeVal <= static_cast<int>(EStrategicIconOutlineMode::Smart)) {
+      config.mMode = static_cast<EStrategicIconOutlineMode>(modeVal);
+    } else {
+      config.mMode = EStrategicIconOutlineMode::None;
+    }
+  }
+
+  const LuaPlus::LuaObject smartCutoffObj = table["smart_cutoff"];
+  if (smartCutoffObj.IsNumber()) {
+    config.mSmartCutoff = static_cast<float>(smartCutoffObj.GetNumber());
+  }
+
+  const LuaPlus::LuaObject shieldObj = table["shield"];
+  if (shieldObj.IsBoolean()) {
+    config.mShowShield = shieldObj.GetBoolean();
+  } else if (shieldObj.IsNumber()) {
+    config.mShowShield = (shieldObj.GetInteger() != 0);
+  }
+
+  const LuaPlus::LuaObject paletteObj = table["palette"];
+  int paletteIndex = -1;
+  if (paletteObj.IsNumber()) {
+    paletteIndex = paletteObj.GetInteger();
+  } else if (paletteObj.IsString()) {
+    const char* str = paletteObj.GetString();
+    if (str != nullptr) {
+      if (_stricmp(str, "neon") == 0) {
+        paletteIndex = 1;
+      } else if (_stricmp(str, "colorblind") == 0 || _stricmp(str, "deuteranopia") == 0 || _stricmp(str, "protanopia") == 0) {
+        paletteIndex = 2;
+      } else if (_stricmp(str, "tritanopia") == 0) {
+        paletteIndex = 3;
+      } else {
+        paletteIndex = 0;
+      }
+    }
+  }
+
+  if (paletteIndex >= 0 && paletteIndex <= 3) {
+    ui_StrategicIconHpOutlinePalette = paletteIndex;
+    switch (paletteIndex) {
+      case 1: // Neon
+        config.mColorGood = 0xFF00FF66u;
+        config.mColorMed  = 0xFFFFD700u;
+        config.mColorBad  = 0xFFFF0033u;
+        config.mColorShield = 0xFF00E5FFu;
+        break;
+      case 2: // Deuteranopia / Protanopia
+        config.mColorGood = 0xFF3B82F6u;
+        config.mColorMed  = 0xFFF59E0Bu;
+        config.mColorBad  = 0xFFF43F5Eu;
+        config.mColorShield = 0xFF06B6D4u;
+        break;
+      case 3: // Tritanopia
+        config.mColorGood = 0xFF10B981u;
+        config.mColorMed  = 0xFFEC4899u;
+        config.mColorBad  = 0xFFEF4444u;
+        config.mColorShield = 0xFF00C8FFu;
+        break;
+      case 0: // Classic / Default
+      default:
+        config.mColorGood = 0xFF22C55Eu;
+        config.mColorMed  = 0xFFEAB308u;
+        config.mColorBad  = 0xFFEF4444u;
+        config.mColorShield = 0xFF00C8FFu;
+        break;
+    }
+  }
+
+  const LuaPlus::LuaObject goodCutoffObj = table["good_cutoff"];
+  if (goodCutoffObj.IsNumber()) {
+    config.mGoodCutoff = static_cast<float>(goodCutoffObj.GetNumber());
+  }
+
+  const LuaPlus::LuaObject badCutoffObj = table["bad_cutoff"];
+  if (badCutoffObj.IsNumber()) {
+    config.mBadCutoff = static_cast<float>(badCutoffObj.GetNumber());
+  }
+
+  std::uint32_t parsedColor = 0;
+  if (TryParseColor(table["color_good"], parsedColor)) {
+    config.mColorGood = parsedColor;
+  }
+  if (TryParseColor(table["color_med"], parsedColor)) {
+    config.mColorMed = parsedColor;
+  }
+  if (TryParseColor(table["color_bad"], parsedColor)) {
+    config.mColorBad = parsedColor;
+  }
+  if (TryParseColor(table["color_shield"], parsedColor)) {
+    config.mColorShield = parsedColor;
+  }
+
+  moho::SetStrategicIconOutlineConfig(config);
+  return 0;
+}
+
+/**
+ * Lua C callback thunk that unwraps `lua_State*` and forwards to
+ * `cfunc_GetStrategicIconOutlineConfigL`.
+ */
+int moho::cfunc_GetStrategicIconOutlineConfig(
+  lua_State* const luaContext
+)
+{
+  return cfunc_GetStrategicIconOutlineConfigL(ResolveBindingLuaState(luaContext));
+}
+
+/**
+ * Returns/creates the global Lua binder definition for
+ * `GetStrategicIconOutlineConfig` in the user init set.
+ */
+moho::CScrLuaInitForm* moho::func_GetStrategicIconOutlineConfig_LuaFuncDef()
+{
+  static CScrLuaBinder binder(
+    moho::SCR_UserLuaInitSet(),
+    "GetStrategicIconOutlineConfig",
+    &moho::cfunc_GetStrategicIconOutlineConfig,
+    nullptr,
+    "<global>",
+    kGetStrategicIconOutlineConfigHelpText
+  );
+  return &binder;
+}
+
+/**
+ * Returns the current strategic icon outline configuration as a Lua table.
+ */
+int moho::cfunc_GetStrategicIconOutlineConfigL(
+  LuaPlus::LuaState* const state
+)
+{
+  if (state == nullptr || state->m_state == nullptr) {
+    return 0;
+  }
+
+  moho::SCR_ExpectExactArgs(state, 0, kGetStrategicIconOutlineConfigHelpText);
+
+  const StrategicIconOutlineConfig config = moho::GetStrategicIconOutlineConfig();
+
+  LuaPlus::LuaObject outTable(state);
+  outTable.AssignNewTable(state, 0, 0);
+  outTable.SetInteger("mode", static_cast<std::int32_t>(config.mMode));
+  outTable.SetNumber("smart_cutoff", config.mSmartCutoff);
+  outTable.SetBoolean("shield", config.mShowShield);
+  outTable.SetInteger("palette", ui_StrategicIconHpOutlinePalette);
+  outTable.SetNumber("good_cutoff", config.mGoodCutoff);
+  outTable.SetNumber("bad_cutoff", config.mBadCutoff);
+  outTable.SetInteger("color_good", static_cast<std::int32_t>(config.mColorGood));
+  outTable.SetInteger("color_med", static_cast<std::int32_t>(config.mColorMed));
+  outTable.SetInteger("color_bad", static_cast<std::int32_t>(config.mColorBad));
+  outTable.SetInteger("color_shield", static_cast<std::int32_t>(config.mColorShield));
+
+  outTable.PushStack(state);
+  return 1;
+}
+
+/**
  * Address: 0x00874AF0 (FUN_00874AF0, `Moho::CMovieManager::CMovieManager`)
  *
  * What it does:
@@ -1693,6 +1943,8 @@ namespace
       (void)moho::func_SetPreference_LuaFuncDef();
       (void)moho::func_SavePreferences_LuaFuncDef();
       (void)moho::func_DebugFacilitiesEnabled_LuaFuncDef();
+      (void)moho::func_SetStrategicIconOutlineConfig_LuaFuncDef();
+      (void)moho::func_GetStrategicIconOutlineConfig_LuaFuncDef();
     }
   };
 

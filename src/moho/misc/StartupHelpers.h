@@ -1019,6 +1019,40 @@ namespace moho
   [[nodiscard]] CScrLuaInitForm* func_DebugFacilitiesEnabled_LuaFuncDef();
 
   /**
+   * Lua C callback thunk that unwraps `lua_State*` and forwards to
+   * `cfunc_SetStrategicIconOutlineConfigL`.
+   */
+  int cfunc_SetStrategicIconOutlineConfig(lua_State* luaContext);
+
+  /**
+   * Reads a configuration table from Lua and updates strategic icon outline settings.
+   */
+  int cfunc_SetStrategicIconOutlineConfigL(LuaPlus::LuaState* state);
+
+  /**
+   * Returns/creates the global Lua binder definition for
+   * `SetStrategicIconOutlineConfig` in the user init set.
+   */
+  [[nodiscard]] CScrLuaInitForm* func_SetStrategicIconOutlineConfig_LuaFuncDef();
+
+  /**
+   * Lua C callback thunk that unwraps `lua_State*` and forwards to
+   * `cfunc_GetStrategicIconOutlineConfigL`.
+   */
+  int cfunc_GetStrategicIconOutlineConfig(lua_State* luaContext);
+
+  /**
+   * Returns the current strategic icon outline configuration as a Lua table.
+   */
+  int cfunc_GetStrategicIconOutlineConfigL(LuaPlus::LuaState* state);
+
+  /**
+   * Returns/creates the global Lua binder definition for
+   * `GetStrategicIconOutlineConfig` in the user init set.
+   */
+  [[nodiscard]] CScrLuaInitForm* func_GetStrategicIconOutlineConfig_LuaFuncDef();
+
+  /**
    * Address: 0x00410760 (FUN_00410760)
    * Mangled:
    * ?FILE_SuggestedExt@Moho@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@VStrArg@gpg@@0@Z
