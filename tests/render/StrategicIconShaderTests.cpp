@@ -444,12 +444,12 @@ TEST(StrategicIconShaderTest, CategoryFilteringAndGhostHandling)
 TEST(StrategicIconShaderTest, OutlineConfigDefaultsAndConVars)
 {
   StrategicIconOutlineConfig config{};
-  EXPECT_EQ(config.mCategoryFilter, 0);
+  EXPECT_EQ(config.mCategoryFilter, 1);
   EXPECT_EQ(config.mContent, 0);
   EXPECT_EQ(config.mPlacement, 0);
   EXPECT_TRUE(config.mPulse);
 
-  EXPECT_EQ(ui_StrategicIconHpOutlineCategory, 0);
+  EXPECT_EQ(ui_StrategicIconHpOutlineCategory, 1);
   EXPECT_EQ(ui_StrategicIconHpOutlineContent, 0);
   EXPECT_EQ(ui_StrategicIconHpOutlinePlacement, 0);
   EXPECT_EQ(ui_StrategicIconHpOutlinePulse, 1);

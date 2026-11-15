@@ -1908,7 +1908,7 @@ namespace moho
     EStrategicIconOutlineMode mMode = EStrategicIconOutlineMode::None;
     float mSmartCutoff = 0.0f;
     bool mShowShield = true;
-    int mCategoryFilter = 0; // 0=All, 1=Commander, 2=Commander+Exp, -1=Custom/Mod
+    int mCategoryFilter = 1; // 0=All, 1=Commander (default), 2=Commander+Exp, -1=Custom/Mod
     int mContent = 0;        // 0=HP+Shield, 1=HP Only, 2=Shield Only
     int mPlacement = 0;      // 0=Full, 1=Top, 2=Bottom, 3=Split
     bool mPulse = true;      // Low-HP Pulse (enabled by default)

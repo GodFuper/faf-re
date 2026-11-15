@@ -905,7 +905,7 @@ do
                 tip = "<LOC options_strategic_icon_outline_category_tip>Restrict health and shield outlines to specific unit categories (All Units, Commander, Commander & Experimental, or Custom mod filter).",
                 key = 'strategic_icon_outline_category',
                 type = 'toggle',
-                default = 0,
+                default = 1,
                 set = function(key, value, startup)
                     if SetStrategicIconOutlineConfig then
                         SetStrategicIconOutlineConfig({ category = value })

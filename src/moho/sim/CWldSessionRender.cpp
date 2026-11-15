@@ -128,7 +128,7 @@ namespace moho
   float ui_StrategicIconHpOutlineSmartCutoff = 0.0f;
   int ui_StrategicIconHpOutlineShield = 1;
   int ui_StrategicIconHpOutlinePalette = 0;
-  int ui_StrategicIconHpOutlineCategory = 0;
+  int ui_StrategicIconHpOutlineCategory = 1;
   int ui_StrategicIconHpOutlineContent = 0;
   int ui_StrategicIconHpOutlinePlacement = 0;
   int ui_StrategicIconHpOutlinePulse = 1;

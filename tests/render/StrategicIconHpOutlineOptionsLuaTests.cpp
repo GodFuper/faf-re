@@ -239,7 +239,7 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllSixOutlineOptionsPresentAndValid
     local category = byKey['strategic_icon_outline_category']
     assert(category ~= nil, "strategic_icon_outline_category item not found")
     assert(category.type == 'toggle', "category type must be toggle")
-    assert(category.default == 0, "category default must be 0")
+    assert(category.default == 1, "category default must be 1 (Commander)")
     assert(type(category.title) == 'string' and string.len(category.title) > 0, "category title missing")
     assert(type(category.tip) == 'string' and string.len(category.tip) > 0, "category tip missing")
     assert(category.custom ~= nil and category.custom.states ~= nil, "category states table missing")
