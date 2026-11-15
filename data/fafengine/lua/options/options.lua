@@ -823,3 +823,127 @@ do
         })
     end
 end
+
+-- Strategic Icon HP and Shield Outlines
+do
+    local ui = options and options.ui
+    if ui and ui.items and not HasOptionKey(ui.items, 'strategic_icon_outline_mode') then
+        local function Supported()
+            return SetStrategicIconOutlineConfig ~= nil or ConTextMatches ~= nil
+        end
+
+        if Supported() then
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_mode>Strategic Icon HP Outline",
+                tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (0=Off, 1=Color Shift, 2=Combined Sweep+Color, 3=Smart Damage Only).",
+                key = 'strategic_icon_outline_mode',
+                type = 'toggle',
+                default = 0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ mode = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlineMode " .. tostring(value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC _Off>Off", key = 0 },
+                        { text = "<LOC options_outline_colorshift>Color Shift", key = 1 },
+                        { text = "<LOC options_outline_combined>Combined", key = 2 },
+                        { text = "<LOC options_outline_smart>Smart (Damage Only)", key = 3 },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_cutoff>Smart Mode Cutoff",
+                tip = "<LOC options_strategic_icon_outline_cutoff_tip>In Smart mode, damaged units with health below this percentage display an outline.",
+                key = 'strategic_icon_outline_smart_cutoff',
+                type = 'toggle',
+                default = 1.0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ smart_cutoff = value })
+                    else
+                        ConExecute(string.format("ui_StrategicIconHpOutlineSmartCutoff %f", value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "100%", key = 1.0 },
+                        { text = "95%", key = 0.95 },
+                        { text = "90%", key = 0.90 },
+                        { text = "80%", key = 0.80 },
+                        { text = "75%", key = 0.75 },
+                        { text = "50%", key = 0.50 },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_shield>Show Shield Outline",
+                tip = "<LOC options_strategic_icon_outline_shield_tip>Render a concentric outer ring indicating active shield status.",
+                key = 'strategic_icon_outline_shield',
+                type = 'toggle',
+                default = true,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ shield = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlineShield " .. (value and "1" or "0"))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC _On>On", key = true },
+                        { text = "<LOC _Off>Off", key = false },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_palette>Outline Color Palette",
+                tip = "<LOC options_strategic_icon_outline_palette_tip>Color theme for the health outline.",
+                key = 'strategic_icon_outline_palette',
+                type = 'toggle',
+                default = 0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ palette = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlinePalette " .. tostring(value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC options_palette_classic>Classic", key = 0 },
+                        { text = "<LOC options_palette_neon>Neon", key = 1 },
+                        { text = "<LOC options_palette_colorblind>Colorblind (Deuteranopia)", key = 2 },
+                        { text = "<LOC options_palette_tritanopia>Tritanopia", key = 3 },
+                    },
+                },
+            })
+        end
+    end
+end
+
+-- Allow switching language on the fly without game restart
+do
+    local ui = options and options.ui
+    if ui and ui.items then
+        for _, item in ui.items do
+            if item.key == 'selectedlanguage' then
+                item.restart = nil
+                item.set = function(key, value, startup)
+                    if not startup and value and value ~= '' and value ~= __language then
+                        language(value)
+                    end
+                end
+                break
+            end
+        end
+    end
+end
+
+
