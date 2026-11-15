@@ -1890,6 +1890,43 @@ namespace moho
   extern bool ui_AlwaysRenderStrategicIcons;      // 0x010A644B
 
   /**
+   * Operating mode for strategic icon HP and shield outlines.
+   */
+  enum class EStrategicIconOutlineMode : std::uint8_t
+  {
+    None = 0,
+    ColorShift = 1,
+    Combined = 2,
+    Smart = 3,
+  };
+
+  /**
+   * Configuration for strategic icon HP and shield outlines.
+   */
+  struct StrategicIconOutlineConfig
+  {
+    EStrategicIconOutlineMode mMode = EStrategicIconOutlineMode::None;
+    float mSmartCutoff = 1.0f;
+    bool mShowShield = true;
+    float mGoodCutoff = 0.65f;
+    float mBadCutoff = 0.30f;
+    std::uint32_t mColorGood = 0xFF22C55Eu;
+    std::uint32_t mColorMed  = 0xFFEAB308u;
+    std::uint32_t mColorBad  = 0xFFEF4444u;
+    std::uint32_t mColorShield = 0xFF00C8FFu;
+
+    bool operator==(const StrategicIconOutlineConfig&) const noexcept = default;
+  };
+
+  StrategicIconOutlineConfig GetStrategicIconOutlineConfig() noexcept;
+  void SetStrategicIconOutlineConfig(const StrategicIconOutlineConfig& config) noexcept;
+
+  extern int ui_StrategicIconHpOutlineMode;
+  extern float ui_StrategicIconHpOutlineSmartCutoff;
+  extern int ui_StrategicIconHpOutlineShield;
+  extern int ui_StrategicIconHpOutlinePalette;
+
+  /**
    * Debug toggle gating `UICommandGraph::DrawCommandGraphMesh`'s path-preview
    * pass (`?ui_DrawPathPreview@Moho@@3_NA` 0x010A6443). Lies in the same
    * zero-filled `.data` tail as `UI_SelectAnything`/`UI_CurGlowTime` with no

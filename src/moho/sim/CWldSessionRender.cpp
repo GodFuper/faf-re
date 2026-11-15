@@ -123,6 +123,51 @@ namespace moho
     &ui_ProjectileIconScale
   );
 
+  // Strategic icon health and shield outline configuration & convars.
+  int ui_StrategicIconHpOutlineMode = 0;
+  float ui_StrategicIconHpOutlineSmartCutoff = 1.0f;
+  int ui_StrategicIconHpOutlineShield = 1;
+  int ui_StrategicIconHpOutlinePalette = 0;
+
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlineMode(
+    "ui_StrategicIconHpOutlineMode",
+    "Operating mode for strategic icon HP outline (0=None, 1=ColorShift, 2=Combined, 3=Smart).",
+    &ui_StrategicIconHpOutlineMode
+  );
+  TConVar<float> gTConVar_ui_StrategicIconHpOutlineSmartCutoff(
+    "ui_StrategicIconHpOutlineSmartCutoff",
+    "Health ratio threshold below which damaged units display outlines in Smart Mode (0.0 to 1.0).",
+    &ui_StrategicIconHpOutlineSmartCutoff
+  );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlineShield(
+    "ui_StrategicIconHpOutlineShield",
+    "Toggle outer shield outline ring on strategic icons for shielded units (1=On, 0=Off).",
+    &ui_StrategicIconHpOutlineShield
+  );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlinePalette(
+    "ui_StrategicIconHpOutlinePalette",
+    "Color palette index for strategic icon health outlines (0=Default, 1=Neon, 2=Deuteranopia/Protanopia, 3=Tritanopia).",
+    &ui_StrategicIconHpOutlinePalette
+  );
+
+  static StrategicIconOutlineConfig sStrategicIconOutlineConfig;
+
+  StrategicIconOutlineConfig GetStrategicIconOutlineConfig() noexcept
+  {
+    sStrategicIconOutlineConfig.mMode = static_cast<EStrategicIconOutlineMode>(ui_StrategicIconHpOutlineMode);
+    sStrategicIconOutlineConfig.mSmartCutoff = ui_StrategicIconHpOutlineSmartCutoff;
+    sStrategicIconOutlineConfig.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
+    return sStrategicIconOutlineConfig;
+  }
+
+  void SetStrategicIconOutlineConfig(const StrategicIconOutlineConfig& config) noexcept
+  {
+    sStrategicIconOutlineConfig = config;
+    ui_StrategicIconHpOutlineMode = static_cast<int>(config.mMode);
+    ui_StrategicIconHpOutlineSmartCutoff = config.mSmartCutoff;
+    ui_StrategicIconHpOutlineShield = config.mShowShield ? 1 : 0;
+  }
+
   // Per-army team-color palette, distinct from `StrategicIconAux`'s own
   // Self/Ally/Enemy/Neutral relation colors: `RenderUnitIcon` (0x0085D9A0)
   // indexes this one directly by the icon's owning army's `mArmyIndex`

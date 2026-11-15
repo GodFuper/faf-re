@@ -74,6 +74,13 @@ set_target_properties(faf_shadow_fit_tests PROPERTIES FOLDER "Tests/Render")
 add_test(NAME shadow_stable_fit COMMAND faf_shadow_fit_tests)
 set_tests_properties(shadow_stable_fit PROPERTIES LABELS "Render")
 
+add_executable(faf_strategic_icon_outline_config_tests EXCLUDE_FROM_ALL render/StrategicIconHpOutlineConfigTests.cpp)
+target_include_directories(faf_strategic_icon_outline_config_tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(faf_strategic_icon_outline_config_tests PRIVATE faf_engine gtest_main)
+set_target_properties(faf_strategic_icon_outline_config_tests PROPERTIES FOLDER "Tests/Render")
+add_test(NAME StrategicIconHpOutlineConfigTest COMMAND faf_strategic_icon_outline_config_tests)
+set_tests_properties(StrategicIconHpOutlineConfigTest PROPERTIES LABELS "Render")
+
 # Engine addition: EffectScan.h against the std::regex patterns it replaced, on generated text.
 # The SFD movie header parser on synthetic headers (moved from tools/sfd-inspect); no engine needed.
 add_executable(faf_sfd_parser_tests EXCLUDE_FROM_ALL movie/SfdHeaderParserTests.cpp
