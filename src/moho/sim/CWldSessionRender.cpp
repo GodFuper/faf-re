@@ -154,10 +154,16 @@ namespace moho
 
   StrategicIconOutlineConfig GetStrategicIconOutlineConfig() noexcept
   {
-    sStrategicIconOutlineConfig.mMode = static_cast<EStrategicIconOutlineMode>(ui_StrategicIconHpOutlineMode);
-    sStrategicIconOutlineConfig.mSmartCutoff = ui_StrategicIconHpOutlineSmartCutoff;
-    sStrategicIconOutlineConfig.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
-    return sStrategicIconOutlineConfig;
+    StrategicIconOutlineConfig config = sStrategicIconOutlineConfig;
+    const int rawMode = ui_StrategicIconHpOutlineMode;
+    if (rawMode >= 0 && rawMode <= static_cast<int>(EStrategicIconOutlineMode::Smart)) {
+      config.mMode = static_cast<EStrategicIconOutlineMode>(rawMode);
+    } else {
+      config.mMode = EStrategicIconOutlineMode::None;
+    }
+    config.mSmartCutoff = ui_StrategicIconHpOutlineSmartCutoff;
+    config.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
+    return config;
   }
 
   void SetStrategicIconOutlineConfig(const StrategicIconOutlineConfig& config) noexcept

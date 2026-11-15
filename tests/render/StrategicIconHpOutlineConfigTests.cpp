@@ -71,6 +71,10 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
   EXPECT_FLOAT_EQ(synced.mSmartCutoff, 0.80f);
   EXPECT_TRUE(synced.mShowShield);
 
+  // Test invalid out-of-bounds ConVar mode falls back safely to None
+  ui_StrategicIconHpOutlineMode = 99;
+  EXPECT_EQ(GetStrategicIconOutlineConfig().mMode, EStrategicIconOutlineMode::None);
+
   // Reset back to defaults for clean state
   SetStrategicIconOutlineConfig(defaultConfig);
   EXPECT_EQ(ui_StrategicIconHpOutlineMode, 0);
