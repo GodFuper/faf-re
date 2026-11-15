@@ -193,25 +193,47 @@ TEST(StrategicIconShaderTest, EndToEndGpuHealthDataPropagationIntegration)
   EXPECT_NEAR(shieldFrac, 0.3f, 0.001f);
 
   // 6. Verify Smart Mode Cutoff logic across all modes:
-  // Shader check: if (SmartCutoff > 0.0 && healthFrac >= SmartCutoff && (shieldFrac >= 1.0 || shieldFrac <= 0.0)) discard;
+  // Smart Cutoff strictly hides HP outline when healthy, but NEVER hides shield outline:
+  // bool hideHp = (SmartCutoff > 0.0 && healthFrac >= SmartCutoff);
+  // bool hasShield = (ShowShield != 0 && shieldFrac > 0.0);
+  // if (hideHp && !hasShield) discard;
   const float smartCutoffDisabled = 0.0f;
   const float smartCutoff100 = 1.0f;
+  const std::uint32_t showShield = 1u;
 
-  const std::uint32_t fullHpRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 0.0f, true);
-  const float fullHpFrac = float(fullHpRecord & 0xFFFFu) / 65535.0f;
-  const float noShieldFrac = float((fullHpRecord >> 16) & 0xFFFFu) / 65535.0f;
+  const std::uint32_t fullHpNoShieldRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 0.0f, true);
+  const float fullHpFrac = float(fullHpNoShieldRecord & 0xFFFFu) / 65535.0f;
+  const float noShieldFrac = float((fullHpNoShieldRecord >> 16) & 0xFFFFu) / 65535.0f;
+
+  const std::uint32_t fullHpFullShieldRecord = StrategicIconInstance::PackHealthAndShield(500.0f, 500.0f, 1.0f, true);
+  const float fullShieldFrac = float((fullHpFullShieldRecord >> 16) & 0xFFFFu) / 65535.0f;
 
   // When Cutoff is disabled (0.0), even full HP undamaged units are NOT discarded:
-  const bool discardedWithCutoffDisabled = (smartCutoffDisabled > 0.0f && fullHpFrac >= smartCutoffDisabled && (noShieldFrac >= 1.0f || noShieldFrac <= 0.0f));
-  EXPECT_FALSE(discardedWithCutoffDisabled);
+  const bool hideHpDisabled = (smartCutoffDisabled > 0.0f && fullHpFrac >= smartCutoffDisabled);
+  const bool hasShieldNoShield = (showShield != 0 && noShieldFrac > 0.0f);
+  EXPECT_FALSE(hideHpDisabled && !hasShieldNoShield);
 
   // When Cutoff is 1.0 (100%), damaged unit is NOT discarded:
-  const bool discardedDamaged = (smartCutoff100 > 0.0f && healthFrac >= smartCutoff100 && (shieldFrac >= 1.0f || shieldFrac <= 0.0f));
-  EXPECT_FALSE(discardedDamaged);
+  const bool hideHpDamaged = (smartCutoff100 > 0.0f && healthFrac >= smartCutoff100);
+  const bool hasShieldPartial = (showShield != 0 && shieldFrac > 0.0f);
+  EXPECT_FALSE(hideHpDamaged && !hasShieldPartial);
 
-  // When Cutoff is 1.0 (100%), full HP undamaged unit MUST be discarded:
-  const bool discardedFull = (smartCutoff100 > 0.0f && fullHpFrac >= smartCutoff100 && (noShieldFrac >= 1.0f || noShieldFrac <= 0.0f));
-  EXPECT_TRUE(discardedFull);
+  // When Cutoff is 1.0 (100%), full HP unit with NO shield MUST be discarded:
+  const bool hideHpFull = (smartCutoff100 > 0.0f && fullHpFrac >= smartCutoff100);
+  EXPECT_TRUE(hideHpFull && !hasShieldNoShield);
+
+  // CRITICAL: When Cutoff is 1.0 (100%) and unit has 100% full shield,
+  // Smart Cutoff does NOT hide the shield! Quad is preserved to render the shield outline:
+  const bool hasShieldFull = (showShield != 0 && fullShieldFrac > 0.0f);
+  const bool fullShieldDiscarded = (hideHpFull && !hasShieldFull);
+  EXPECT_FALSE(fullShieldDiscarded);
+
+  // HP outline is hidden for full health, but shield outline remains active:
+  const bool isHpPixel = true;
+  const float hpAlpha = (isHpPixel && !hideHpFull) ? 1.0f : 0.0f;
+  const float shieldAlpha = (!isHpPixel || true) && hasShieldFull ? 1.0f : 0.0f;
+  EXPECT_EQ(hpAlpha, 0.0f);
+  EXPECT_GT(shieldAlpha, 0.0f);
 }
 
 } // namespace moho

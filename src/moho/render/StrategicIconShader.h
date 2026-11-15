@@ -179,8 +179,11 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     float healthFrac = float(input.healthShield & 0xFFFF) / 65535.0;
     float shieldFrac = float((input.healthShield >> 16) & 0xFFFF) / 65535.0;
 
-    // Cutoff check: if cutoff enabled (SmartCutoff > 0.0), hide outline when healthy and shield not damaged
-    if (SmartCutoff > 0.0 && healthFrac >= SmartCutoff && (shieldFrac >= 1.0 || shieldFrac <= 0.0))
+    // Cutoff check: if cutoff enabled (SmartCutoff > 0.0), hide HP outline when healthy.
+    // SmartCutoff does NOT apply to shield (shield outline is always drawn when active).
+    bool hideHp = (SmartCutoff > 0.0 && healthFrac >= SmartCutoff);
+    bool hasShield = (ShowShield != 0 && shieldFrac > 0.0);
+    if (hideHp && !hasShield)
     {
         discard;
     }
@@ -237,7 +240,7 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     // HP outline determination
     bool isHp = (maxA1 > 0.3);
     float hpAlpha = 0.0;
-    if (isHp)
+    if (isHp && !hideHp)
     {
         if (OutlineMode == 1)
         {
