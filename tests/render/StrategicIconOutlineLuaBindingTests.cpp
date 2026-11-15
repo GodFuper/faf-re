@@ -67,6 +67,10 @@ TEST_F(StrategicIconOutlineLuaBindingTest, LuaTableRoundtrip)
     assert(cfg.shield == true, "shield mismatch")
     assert(math.abs(cfg.good_cutoff - 0.70) < 0.001, "good_cutoff mismatch")
     assert(math.abs(cfg.bad_cutoff - 0.25) < 0.001, "bad_cutoff mismatch")
+    assert(cfg.color_good == 0xFF00FF66, "color_good mismatch")
+    assert(cfg.color_med == 0xFFFFD700, "color_med mismatch")
+    assert(cfg.color_bad == 0xFFFF0033, "color_bad mismatch")
+    assert(cfg.color_shield == 0xFF00E5FF, "color_shield mismatch")
   )";
   ExecuteLua(script);
 
@@ -76,6 +80,10 @@ TEST_F(StrategicIconOutlineLuaBindingTest, LuaTableRoundtrip)
   EXPECT_TRUE(synced.mShowShield);
   EXPECT_NEAR(synced.mGoodCutoff, 0.70f, 0.001f);
   EXPECT_NEAR(synced.mBadCutoff, 0.25f, 0.001f);
+  EXPECT_EQ(synced.mColorGood, 0xFF00FF66u);
+  EXPECT_EQ(synced.mColorMed, 0xFFFFD700u);
+  EXPECT_EQ(synced.mColorBad, 0xFFFF0033u);
+  EXPECT_EQ(synced.mColorShield, 0xFF00E5FFu);
 }
 
 TEST_F(StrategicIconOutlineLuaBindingTest, PalettePresets)

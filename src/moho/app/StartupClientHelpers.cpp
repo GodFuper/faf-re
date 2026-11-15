@@ -374,6 +374,9 @@ namespace
       } else {
         outColor = static_cast<std::uint32_t>(static_cast<std::uint64_t>(num));
       }
+      if ((outColor & 0xFF000000u) == 0 && outColor > 0) {
+        outColor |= 0xFF000000u;
+      }
       return true;
     }
     if (obj.IsString()) {
@@ -386,7 +389,7 @@ namespace
         }
         char* endPtr = nullptr;
         const unsigned long long val = std::strtoull(str, &endPtr, 16);
-        if (endPtr != str) {
+        if (endPtr != str && *endPtr == '\0') {
           std::uint32_t parsed = static_cast<std::uint32_t>(val);
           if ((parsed & 0xFF000000u) == 0 && std::strlen(str) <= 6) {
             parsed |= 0xFF000000u;
@@ -1290,7 +1293,7 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
 
   const LuaPlus::LuaObject smartCutoffObj = table["smart_cutoff"];
   if (smartCutoffObj.IsNumber()) {
-    config.mSmartCutoff = static_cast<float>(smartCutoffObj.GetNumber());
+    config.mSmartCutoff = std::clamp(static_cast<float>(smartCutoffObj.GetNumber()), 0.0f, 1.0f);
   }
 
   const LuaPlus::LuaObject shieldObj = table["shield"];
@@ -1313,7 +1316,7 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
         paletteIndex = 2;
       } else if (_stricmp(str, "tritanopia") == 0) {
         paletteIndex = 3;
-      } else {
+      } else if (_stricmp(str, "classic") == 0 || _stricmp(str, "default") == 0) {
         paletteIndex = 0;
       }
     }
@@ -1352,12 +1355,12 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
 
   const LuaPlus::LuaObject goodCutoffObj = table["good_cutoff"];
   if (goodCutoffObj.IsNumber()) {
-    config.mGoodCutoff = static_cast<float>(goodCutoffObj.GetNumber());
+    config.mGoodCutoff = std::clamp(static_cast<float>(goodCutoffObj.GetNumber()), 0.0f, 1.0f);
   }
 
   const LuaPlus::LuaObject badCutoffObj = table["bad_cutoff"];
   if (badCutoffObj.IsNumber()) {
-    config.mBadCutoff = static_cast<float>(badCutoffObj.GetNumber());
+    config.mBadCutoff = std::clamp(static_cast<float>(badCutoffObj.GetNumber()), 0.0f, 1.0f);
   }
 
   std::uint32_t parsedColor = 0;
