@@ -374,8 +374,8 @@ void CompactIconsCS(uint thread : SV_GroupIndex)
 
     if (thread == 0u)
     {
-        // The hovered slot after the four runs, then the DrawInstanced arguments: 24 vertices per
-        // icon, one instance per record.
+        // The hovered slot after the four runs, then the DrawInstanced arguments: 30 vertices per
+        // icon, one instance per record (5 layers * 6 vertices per quad).
         uint total = totals.x + totals.y + totals.z + totals.w;
         // Hovered is 0xFFFFFFFF with nothing hovered, and HLSL evaluates both sides of &&: the read
         // is clamped into the buffer (Count is at least 1 here) so it never goes past its end.
@@ -385,7 +385,7 @@ void CompactIconsCS(uint thread : SV_GroupIndex)
             Output[total] = StagedIn[Hovered];
             total += 1u;
         }
-        DrawArgs.Store4(0, uint4(24u, total, 0u, 0u));
+        DrawArgs.Store4(0, uint4(30u, total, 0u, 0u));
     }
 }
 )hlsl";

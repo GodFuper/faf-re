@@ -83,6 +83,9 @@ namespace moho
     const std::uint16_t slot
   ) noexcept
   {
+    if (layer >= 4U) {
+      return;
+    }
     std::uint32_t& packed = layer < 2U ? mLayers01 : mLayers23;
     const std::uint32_t shift = (layer & 1U) * 16U;
     packed = (packed & ~(0xFFFFU << shift)) | (static_cast<std::uint32_t>(slot) << shift);

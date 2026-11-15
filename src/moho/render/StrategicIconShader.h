@@ -196,7 +196,7 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
         }
         else
         {
-            hpAngleAlpha = normAngle <= healthFrac ? 1.0 : 0.0;
+            hpAngleAlpha = (healthFrac > 0.0 && normAngle <= healthFrac) ? 1.0 : 0.0;
         }
     }
     float hpAlpha = hpRadial * hpAngleAlpha;
@@ -215,7 +215,7 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     if (ShowShield != 0 && shieldFrac > 0.0)
     {
         float shieldRadial = smoothstep(0.85 - dr, 0.85 + dr, r) * (1.0 - smoothstep(1.00 - dr, 1.00 + dr, r));
-        float shieldAngleAlpha = normAngle <= shieldFrac ? 1.0 : 0.0;
+        float shieldAngleAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
         shieldAlpha = shieldRadial * shieldAngleAlpha;
     }
 
