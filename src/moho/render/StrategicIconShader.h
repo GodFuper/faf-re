@@ -172,12 +172,13 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     }
 
     // Angle starting at 12 o'clock (0.0) sweeping clockwise to 1.0
+    static const float kTwoPi = 6.28318530718;
     float angle = atan2(input.localPos.x, -input.localPos.y);
     if (angle < 0.0)
     {
-        angle += 6.28318530718;
+        angle += kTwoPi;
     }
-    float normAngle = angle / 6.28318530718;
+    float normAngle = angle / kTwoPi;
 
     float dr = max(fwidth(r) * 1.5, 0.005);
 

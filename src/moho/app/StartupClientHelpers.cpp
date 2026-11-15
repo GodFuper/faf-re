@@ -1363,6 +1363,10 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
     config.mBadCutoff = std::clamp(static_cast<float>(badCutoffObj.GetNumber()), 0.0f, 1.0f);
   }
 
+  if (config.mGoodCutoff <= config.mBadCutoff) {
+    config.mGoodCutoff = std::min(1.0f, config.mBadCutoff + 0.05f);
+  }
+
   std::uint32_t parsedColor = 0;
   if (TryParseColor(table["color_good"], parsedColor)) {
     config.mColorGood = parsedColor;

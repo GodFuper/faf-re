@@ -2096,6 +2096,7 @@ namespace moho
         icon.mSuppressBaseIcon ? nullptr : candidate.mIcon,
         (icon.mShowPausedOverlay && aux.mPauseRestTexture) ? &aux.mPauseRestTexture : nullptr,
         (icon.mShowStunnedOverlay && aux.mStunnedRestTexture) ? &aux.mStunnedRestTexture : nullptr,
+        nullptr, /* layer 4 is procedural outline (no texture) */
       };
       bool complete = true;
       for (std::uint32_t layer = 0U; layer < StrategicIconInstance::kLayerCount; ++layer) {
