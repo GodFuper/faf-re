@@ -1908,6 +1908,10 @@ namespace moho
     EStrategicIconOutlineMode mMode = EStrategicIconOutlineMode::None;
     float mSmartCutoff = 0.0f;
     bool mShowShield = true;
+    int mCategoryFilter = 0; // 0=All, 1=Commander, 2=Commander+Exp, -1=Custom/Mod
+    int mContent = 0;        // 0=HP+Shield, 1=HP Only, 2=Shield Only
+    int mPlacement = 0;      // 0=Full, 1=Top, 2=Bottom, 3=Split
+    bool mPulse = true;      // Low-HP Pulse (enabled by default)
     float mGoodCutoff = 0.65f;
     float mBadCutoff = 0.30f;
     std::uint32_t mColorGood = 0xFF22C55Eu;
@@ -1920,11 +1924,18 @@ namespace moho
 
   StrategicIconOutlineConfig GetStrategicIconOutlineConfig() noexcept;
   void SetStrategicIconOutlineConfig(const StrategicIconOutlineConfig& config) noexcept;
+  bool UnitPassesStrategicIconCategoryFilter(const UserEntity* entity, int filterMode);
+  void SetStrategicIconCustomCategory(const char* categoryName);
+  void SetStrategicIconCustomCategorySet(const EntityCategorySet* categorySet);
 
   extern int ui_StrategicIconHpOutlineMode;
   extern float ui_StrategicIconHpOutlineSmartCutoff;
   extern int ui_StrategicIconHpOutlineShield;
   extern int ui_StrategicIconHpOutlinePalette;
+  extern int ui_StrategicIconHpOutlineCategory;
+  extern int ui_StrategicIconHpOutlineContent;
+  extern int ui_StrategicIconHpOutlinePlacement;
+  extern int ui_StrategicIconHpOutlinePulse;
 
   /**
    * Debug toggle gating `UICommandGraph::DrawCommandGraphMesh`'s path-preview

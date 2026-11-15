@@ -128,6 +128,10 @@ namespace moho
   float ui_StrategicIconHpOutlineSmartCutoff = 0.0f;
   int ui_StrategicIconHpOutlineShield = 1;
   int ui_StrategicIconHpOutlinePalette = 0;
+  int ui_StrategicIconHpOutlineCategory = 0;
+  int ui_StrategicIconHpOutlineContent = 0;
+  int ui_StrategicIconHpOutlinePlacement = 0;
+  int ui_StrategicIconHpOutlinePulse = 1;
 
   TConVar<int> gTConVar_ui_StrategicIconHpOutlineMode(
     "ui_StrategicIconHpOutlineMode",
@@ -149,8 +153,76 @@ namespace moho
     "Color palette index for strategic icon health outlines (0=Default, 1=Neon, 2=Deuteranopia/Protanopia, 3=Tritanopia).",
     &ui_StrategicIconHpOutlinePalette
   );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlineCategory(
+    "ui_StrategicIconHpOutlineCategory",
+    "Category filter for strategic icon HP outline (0=All, 1=Commander, 2=Commander+Exp, -1=Custom).",
+    &ui_StrategicIconHpOutlineCategory
+  );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlineContent(
+    "ui_StrategicIconHpOutlineContent",
+    "Content displayed by strategic icon outline (0=HP+Shield, 1=HP only, 2=Shield only).",
+    &ui_StrategicIconHpOutlineContent
+  );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlinePlacement(
+    "ui_StrategicIconHpOutlinePlacement",
+    "Placement style for strategic icon outline (0=Full, 1=Top, 2=Bottom, 3=Split).",
+    &ui_StrategicIconHpOutlinePlacement
+  );
+  TConVar<int> gTConVar_ui_StrategicIconHpOutlinePulse(
+    "ui_StrategicIconHpOutlinePulse",
+    "Enable animated pulse effect when unit HP is in the critical/bad zone (1=On, 0=Off).",
+    &ui_StrategicIconHpOutlinePulse
+  );
 
   static StrategicIconOutlineConfig sStrategicIconOutlineConfig;
+  static fa::string sStrategicIconCustomCategoryName;
+  static const EntityCategorySet* sStrategicIconCustomCategorySet = nullptr;
+
+  void SetStrategicIconCustomCategory(const char* const categoryName)
+  {
+    if (categoryName != nullptr) {
+      sStrategicIconCustomCategoryName = categoryName;
+    } else {
+      sStrategicIconCustomCategoryName.clear();
+    }
+  }
+
+  void SetStrategicIconCustomCategorySet(const EntityCategorySet* const categorySet)
+  {
+    sStrategicIconCustomCategorySet = categorySet;
+  }
+
+  bool UnitPassesStrategicIconCategoryFilter(const UserEntity* const entity, const int filterMode)
+  {
+    if (entity == nullptr) {
+      return false;
+    }
+    if (filterMode == 0) {
+      return true;
+    }
+    if (filterMode == 1) {
+      return entity->IsInCategory("COMMAND") || entity->IsInCategory("SUBCOMMANDER");
+    }
+    if (filterMode == 2) {
+      return entity->IsInCategory("COMMAND") || entity->IsInCategory("SUBCOMMANDER") || entity->IsInCategory("EXPERIMENTAL");
+    }
+    if (filterMode == -1) {
+      if (sStrategicIconCustomCategorySet != nullptr) {
+        if (entity->mParams.mBlueprint != nullptr) {
+          return sStrategicIconCustomCategorySet->Bits().Contains(static_cast<unsigned int>(entity->mParams.mBlueprint->mBlueprintOrdinal));
+        }
+        return false;
+      }
+      if (!sStrategicIconCustomCategoryName.empty()) {
+        return entity->IsInCategory(sStrategicIconCustomCategoryName);
+      }
+      return true;
+    }
+    if (filterMode <= 0) {
+      return true;
+    }
+    return true;
+  }
 
   StrategicIconOutlineConfig GetStrategicIconOutlineConfig() noexcept
   {
@@ -163,9 +235,16 @@ namespace moho
     }
     config.mSmartCutoff = ui_StrategicIconHpOutlineSmartCutoff;
     config.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
+    config.mCategoryFilter = ui_StrategicIconHpOutlineCategory;
+    config.mContent = ui_StrategicIconHpOutlineContent;
+    if (!config.mShowShield && config.mContent == 0) {
+      config.mContent = 1;
+    }
+    config.mPlacement = ui_StrategicIconHpOutlinePlacement;
+    config.mPulse = (ui_StrategicIconHpOutlinePulse != 0);
 
     const int palette = ui_StrategicIconHpOutlinePalette;
-    if (palette >= 0 && palette <= 3) {
+    if (palette > 0 && palette <= 3) {
       switch (palette) {
         case 1: // Neon
           config.mColorGood = 0xFF00FF66u;
@@ -203,6 +282,10 @@ namespace moho
     ui_StrategicIconHpOutlineMode = static_cast<int>(config.mMode);
     ui_StrategicIconHpOutlineSmartCutoff = config.mSmartCutoff;
     ui_StrategicIconHpOutlineShield = config.mShowShield ? 1 : 0;
+    ui_StrategicIconHpOutlineCategory = config.mCategoryFilter;
+    ui_StrategicIconHpOutlineContent = config.mContent;
+    ui_StrategicIconHpOutlinePlacement = config.mPlacement;
+    ui_StrategicIconHpOutlinePulse = config.mPulse ? 1 : 0;
   }
 
   // Per-army team-color palette, distinct from `StrategicIconAux`'s own
@@ -2115,8 +2198,11 @@ namespace moho
           shieldRatio,
           candidate.mData.mIsFriendly
         );
+        if (!UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
+          record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
+        }
       } else {
-        record.mHealthShield = 0x0000FFFFu; // 100% health, 0% shield
+        record.mHealthShield = 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag; // 100% health, 0% shield, outline disabled
       }
 
       // The textures `StoreStrategicIcon` would attach: the picked icon, and the paused and
@@ -2754,6 +2840,7 @@ namespace moho
         needsSlot = 0U;
         UserEntity* const entity = source.mEntity;
         if (entity == nullptr) {
+          record.mHealthShield = 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag;
           return;
         }
         using Gpu = StrategicIconSourceRecord;
@@ -2816,6 +2903,9 @@ namespace moho
           shieldRatio,
           source.Has(StrategicIconSource::kFriendly)
         );
+        if (!UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
+          record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
+        }
 
         const auto findSlot = [this](const std::shared_ptr<CD3DBatchTexture>* const texture) -> std::uint32_t {
           return (texture != nullptr && *texture) ? gpuIcons.FindSlot(texture->get()) : StrategicIconInstance::kNoLayer;

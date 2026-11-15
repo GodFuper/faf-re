@@ -157,3 +157,74 @@ TEST_F(StrategicIconOutlineLuaBindingTest, GracefulHandlingOfNonTableOrInvalidMo
   ExecuteLua(script2);
   EXPECT_EQ(moho::GetStrategicIconOutlineConfig().mMode, moho::EStrategicIconOutlineMode::None);
 }
+
+TEST_F(StrategicIconOutlineLuaBindingTest, CategoryContentPlacementPulseRoundtrip)
+{
+  // 1. Numeric arguments
+  const char* scriptNum = R"(
+    SetStrategicIconOutlineConfig({
+      category = 2,
+      content = 1,
+      placement = 3,
+      pulse = false
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg.category == 2, "category mismatch: " .. tostring(cfg.category))
+    assert(cfg.content == 1, "content mismatch: " .. tostring(cfg.content))
+    assert(cfg.placement == 3, "placement mismatch: " .. tostring(cfg.placement))
+    assert(cfg.pulse == false, "pulse mismatch")
+  )";
+  ExecuteLua(scriptNum);
+
+  auto config = moho::GetStrategicIconOutlineConfig();
+  EXPECT_EQ(config.mCategoryFilter, 2);
+  EXPECT_EQ(config.mContent, 1);
+  EXPECT_EQ(config.mPlacement, 3);
+  EXPECT_FALSE(config.mPulse);
+
+  EXPECT_EQ(moho::ui_StrategicIconHpOutlineCategory, 2);
+  EXPECT_EQ(moho::ui_StrategicIconHpOutlineContent, 1);
+  EXPECT_EQ(moho::ui_StrategicIconHpOutlinePlacement, 3);
+  EXPECT_EQ(moho::ui_StrategicIconHpOutlinePulse, 0);
+
+  // 2. String arguments
+  const char* scriptStr = R"(
+    SetStrategicIconOutlineConfig({
+      category = "commander",
+      content = "shield",
+      placement = "top",
+      pulse = true
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg.category == 1, "category mismatch: " .. tostring(cfg.category))
+    assert(cfg.content == 2, "content mismatch: " .. tostring(cfg.content))
+    assert(cfg.placement == 1, "placement mismatch: " .. tostring(cfg.placement))
+    assert(cfg.pulse == true, "pulse mismatch")
+  )";
+  ExecuteLua(scriptStr);
+
+  config = moho::GetStrategicIconOutlineConfig();
+  EXPECT_EQ(config.mCategoryFilter, 1);
+  EXPECT_EQ(config.mContent, 2);
+  EXPECT_EQ(config.mPlacement, 1);
+  EXPECT_TRUE(config.mPulse);
+
+  // 3. String aliases
+  const char* scriptAliases = R"(
+    SetStrategicIconOutlineConfig({
+      category = "experimental",
+      content = "both",
+      placement = "split_tb"
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg.category == 2, "category mismatch")
+    assert(cfg.content == 0, "content mismatch")
+    assert(cfg.placement == 3, "placement mismatch")
+  )";
+  ExecuteLua(scriptAliases);
+
+  config = moho::GetStrategicIconOutlineConfig();
+  EXPECT_EQ(config.mCategoryFilter, 2);
+  EXPECT_EQ(config.mContent, 0);
+  EXPECT_EQ(config.mPlacement, 3);
+}

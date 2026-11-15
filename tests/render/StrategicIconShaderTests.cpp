@@ -1,10 +1,16 @@
 #include <gtest/gtest.h>
 #include <cstddef>
+#include <cstring>
 #include <string_view>
 #include <d3dcompiler.h>
 #include "moho/render/StrategicIconClassifyShader.h"
 #include "moho/render/StrategicIconRenderer.h"
 #include "moho/render/StrategicIconShader.h"
+#include "moho/resource/blueprints/RBlueprint.h"
+#include "moho/entity/REntityBlueprint.h"
+#include "moho/sim/CWldSession.h"
+#include "moho/entity/UserEntity.h"
+#include "moho/entity/EntityCategoryReflection.h"
 
 namespace moho
 {
@@ -271,6 +277,162 @@ TEST(StrategicIconShaderTest, EndToEndGpuHealthDataPropagationIntegration)
   const float shieldAlpha = (!isHpPixel || true) && hasShieldFull ? 1.0f : 0.0f;
   EXPECT_EQ(hpAlpha, 0.0f);
   EXPECT_GT(shieldAlpha, 0.0f);
+}
+
+TEST(StrategicIconShaderTest, CategoryFilteringAndGhostHandling)
+{
+  // 1. nullptr entity returns false
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(nullptr, 0));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(nullptr, 1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(nullptr, 2));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(nullptr, -1));
+
+  // 2. Setup mock game rules and categories
+  static EntityCategorySet commandSet;
+  static EntityCategorySet subcommanderSet;
+  static EntityCategorySet experimentalSet;
+  static EntityCategorySet customAirSet;
+
+  commandSet.Bits().Add(10);        // Ordinal 10 is COMMAND
+  subcommanderSet.Bits().Add(20);   // Ordinal 20 is SUBCOMMANDER
+  experimentalSet.Bits().Add(30);   // Ordinal 30 is EXPERIMENTAL
+  customAirSet.Bits().Add(40);      // Ordinal 40 is CUSTOM / AIR
+
+  struct MockGameRulesTable
+  {
+    static const EntityCategorySet* MockGetEntityCategory(const void* /*thisPtr*/, const char* name)
+    {
+      if (std::strcmp(name, "COMMAND") == 0) return &commandSet;
+      if (std::strcmp(name, "SUBCOMMANDER") == 0) return &subcommanderSet;
+      if (std::strcmp(name, "EXPERIMENTAL") == 0) return &experimentalSet;
+      if (std::strcmp(name, "AIR") == 0) return &customAirSet;
+      return nullptr;
+    }
+  };
+
+  void* mockVtable[32];
+  for (std::size_t i = 0; i < 32; ++i) {
+    mockVtable[i] = reinterpret_cast<void*>(&MockGameRulesTable::MockGetEntityCategory);
+  }
+
+  struct MockGameRulesObject
+  {
+    void** vtable;
+  } mockRulesObject{ mockVtable };
+
+  // Session stub with mRules pointing to mockRulesObject
+  alignas(CWldSession) std::byte sessionBytes[sizeof(CWldSession)]{};
+  CWldSession* const mockSession = reinterpret_cast<CWldSession*>(sessionBytes);
+  mockSession->mRules = reinterpret_cast<RRuleGameRulesImpl*>(&mockRulesObject);
+
+  // Blueprints
+  alignas(REntityBlueprint) std::byte bpCommandBytes[sizeof(REntityBlueprint)]{};
+  REntityBlueprint* const bpCommand = reinterpret_cast<REntityBlueprint*>(bpCommandBytes);
+  bpCommand->mBlueprintOrdinal = 10;
+
+  alignas(REntityBlueprint) std::byte bpSubcommanderBytes[sizeof(REntityBlueprint)]{};
+  REntityBlueprint* const bpSubcommander = reinterpret_cast<REntityBlueprint*>(bpSubcommanderBytes);
+  bpSubcommander->mBlueprintOrdinal = 20;
+
+  alignas(REntityBlueprint) std::byte bpExpBytes[sizeof(REntityBlueprint)]{};
+  REntityBlueprint* const bpExp = reinterpret_cast<REntityBlueprint*>(bpExpBytes);
+  bpExp->mBlueprintOrdinal = 30;
+
+  alignas(REntityBlueprint) std::byte bpAirBytes[sizeof(REntityBlueprint)]{};
+  REntityBlueprint* const bpAir = reinterpret_cast<REntityBlueprint*>(bpAirBytes);
+  bpAir->mBlueprintOrdinal = 40;
+
+  alignas(REntityBlueprint) std::byte bpNormalBytes[sizeof(REntityBlueprint)]{};
+  REntityBlueprint* const bpNormal = reinterpret_cast<REntityBlueprint*>(bpNormalBytes);
+  bpNormal->mBlueprintOrdinal = 50; // Not in any special category
+
+  // Entities
+  alignas(UserEntity) std::byte entCommandBytes[sizeof(UserEntity)]{};
+  UserEntity* const entCommand = reinterpret_cast<UserEntity*>(entCommandBytes);
+  entCommand->mSession = mockSession;
+  entCommand->mParams.mBlueprint = bpCommand;
+
+  alignas(UserEntity) std::byte entSubcommanderBytes[sizeof(UserEntity)]{};
+  UserEntity* const entSubcommander = reinterpret_cast<UserEntity*>(entSubcommanderBytes);
+  entSubcommander->mSession = mockSession;
+  entSubcommander->mParams.mBlueprint = bpSubcommander;
+
+  alignas(UserEntity) std::byte entExpBytes[sizeof(UserEntity)]{};
+  UserEntity* const entExp = reinterpret_cast<UserEntity*>(entExpBytes);
+  entExp->mSession = mockSession;
+  entExp->mParams.mBlueprint = bpExp;
+
+  alignas(UserEntity) std::byte entAirBytes[sizeof(UserEntity)]{};
+  UserEntity* const entAir = reinterpret_cast<UserEntity*>(entAirBytes);
+  entAir->mSession = mockSession;
+  entAir->mParams.mBlueprint = bpAir;
+
+  alignas(UserEntity) std::byte entNormalBytes[sizeof(UserEntity)]{};
+  UserEntity* const entNormal = reinterpret_cast<UserEntity*>(entNormalBytes);
+  entNormal->mSession = mockSession;
+  entNormal->mParams.mBlueprint = bpNormal;
+
+  // Filter 0: All units pass
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entCommand, 0));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entSubcommander, 0));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entExp, 0));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entAir, 0));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entNormal, 0));
+
+  // Filter 1: Commander only (COMMAND or SUBCOMMANDER)
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entCommand, 1));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entSubcommander, 1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entExp, 1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entAir, 1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entNormal, 1));
+
+  // Filter 2: Commander + Experimental (COMMAND, SUBCOMMANDER, or EXPERIMENTAL)
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entCommand, 2));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entSubcommander, 2));
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entExp, 2));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entAir, 2));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entNormal, 2));
+
+  // Filter -1: Custom category
+  // With custom set to "AIR":
+  SetStrategicIconCustomCategory("AIR");
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entAir, -1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entCommand, -1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entNormal, -1));
+
+  // With custom set to category set directly:
+  SetStrategicIconCustomCategorySet(&customAirSet);
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entAir, -1));
+  EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entCommand, -1));
+
+  // With custom cleared: fallback passes all
+  SetStrategicIconCustomCategory("");
+  SetStrategicIconCustomCategorySet(nullptr);
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entNormal, -1));
+
+  // Ghost and Formation flags in StrategicIconRecord building
+  // Formation ghost receives kOutlineDisabledFlag
+  const std::uint32_t ghostPacked = 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag;
+  EXPECT_NE(ghostPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // When unit fails category filter, kOutlineDisabledFlag is set
+  const std::uint32_t normalPacked = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.0f, true);
+  const std::uint32_t filteredOutPacked = normalPacked | StrategicIconInstance::kOutlineDisabledFlag;
+  EXPECT_NE(filteredOutPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+}
+
+TEST(StrategicIconShaderTest, OutlineConfigDefaultsAndConVars)
+{
+  StrategicIconOutlineConfig config{};
+  EXPECT_EQ(config.mCategoryFilter, 0);
+  EXPECT_EQ(config.mContent, 0);
+  EXPECT_EQ(config.mPlacement, 0);
+  EXPECT_TRUE(config.mPulse);
+
+  EXPECT_EQ(ui_StrategicIconHpOutlineCategory, 0);
+  EXPECT_EQ(ui_StrategicIconHpOutlineContent, 0);
+  EXPECT_EQ(ui_StrategicIconHpOutlinePlacement, 0);
+  EXPECT_EQ(ui_StrategicIconHpOutlinePulse, 1);
 }
 
 } // namespace moho

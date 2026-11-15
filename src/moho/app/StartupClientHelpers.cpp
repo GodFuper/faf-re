@@ -9,6 +9,7 @@
 #include "moho/lua/CScrLuaInitForm.h"
 #include "moho/movie/sfd/IndependentSfdBackend.h"
 #include "moho/misc/StartupHelpers.h"
+#include "moho/entity/EntityCategoryReflection.h"
 #include "legacy/containers/AutoPtr.h"
 #include "legacy/containers/Set.h"
 #include <algorithm>
@@ -1303,6 +1304,85 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
     config.mShowShield = (shieldObj.GetInteger() != 0);
   }
 
+  const LuaPlus::LuaObject categoryObj = table["category"];
+  if (categoryObj.IsNumber()) {
+    config.mCategoryFilter = categoryObj.GetInteger();
+    ui_StrategicIconHpOutlineCategory = config.mCategoryFilter;
+  } else if (categoryObj.IsString()) {
+    const char* str = categoryObj.GetString();
+    if (str != nullptr) {
+      if (_stricmp(str, "all") == 0) {
+        config.mCategoryFilter = 0;
+      } else if (_stricmp(str, "commander") == 0 || _stricmp(str, "command") == 0) {
+        config.mCategoryFilter = 1;
+      } else if (_stricmp(str, "experimental") == 0 || _stricmp(str, "commander_exp") == 0 || _stricmp(str, "commander+exp") == 0) {
+        config.mCategoryFilter = 2;
+      } else {
+        config.mCategoryFilter = -1;
+        SetStrategicIconCustomCategory(str);
+      }
+      ui_StrategicIconHpOutlineCategory = config.mCategoryFilter;
+    }
+  } else if (categoryObj.IsUserData()) {
+    EntityCategorySet* catSet = func_GetCObj_EntityCategory(categoryObj);
+    config.mCategoryFilter = -1;
+    ui_StrategicIconHpOutlineCategory = -1;
+    SetStrategicIconCustomCategorySet(catSet);
+  }
+
+  const LuaPlus::LuaObject contentObj = table["content"];
+  if (contentObj.IsNumber()) {
+    const int contentVal = contentObj.GetInteger();
+    if (contentVal >= 0 && contentVal <= 2) {
+      config.mContent = contentVal;
+      ui_StrategicIconHpOutlineContent = config.mContent;
+    }
+  } else if (contentObj.IsString()) {
+    const char* str = contentObj.GetString();
+    if (str != nullptr) {
+      if (_stricmp(str, "both") == 0 || _stricmp(str, "all") == 0) {
+        config.mContent = 0;
+      } else if (_stricmp(str, "hp") == 0 || _stricmp(str, "hponly") == 0) {
+        config.mContent = 1;
+      } else if (_stricmp(str, "shield") == 0 || _stricmp(str, "shieldonly") == 0) {
+        config.mContent = 2;
+      }
+      ui_StrategicIconHpOutlineContent = config.mContent;
+    }
+  }
+
+  const LuaPlus::LuaObject placementObj = table["placement"];
+  if (placementObj.IsNumber()) {
+    const int placementVal = placementObj.GetInteger();
+    if (placementVal >= 0 && placementVal <= 3) {
+      config.mPlacement = placementVal;
+      ui_StrategicIconHpOutlinePlacement = config.mPlacement;
+    }
+  } else if (placementObj.IsString()) {
+    const char* str = placementObj.GetString();
+    if (str != nullptr) {
+      if (_stricmp(str, "full") == 0 || _stricmp(str, "all") == 0 || _stricmp(str, "all_around") == 0) {
+        config.mPlacement = 0;
+      } else if (_stricmp(str, "top") == 0) {
+        config.mPlacement = 1;
+      } else if (_stricmp(str, "bottom") == 0) {
+        config.mPlacement = 2;
+      } else if (_stricmp(str, "split_tb") == 0 || _stricmp(str, "split") == 0) {
+        config.mPlacement = 3;
+      }
+      ui_StrategicIconHpOutlinePlacement = config.mPlacement;
+    }
+  }
+
+  const LuaPlus::LuaObject pulseObj = table["pulse"];
+  if (pulseObj.IsBoolean()) {
+    config.mPulse = pulseObj.GetBoolean();
+    ui_StrategicIconHpOutlinePulse = config.mPulse ? 1 : 0;
+  } else if (pulseObj.IsNumber()) {
+    config.mPulse = (pulseObj.GetInteger() != 0);
+    ui_StrategicIconHpOutlinePulse = config.mPulse ? 1 : 0;
+  }
+
   const LuaPlus::LuaObject paletteObj = table["palette"];
   int paletteIndex = -1;
   if (paletteObj.IsNumber()) {
@@ -1433,6 +1513,10 @@ int moho::cfunc_GetStrategicIconOutlineConfigL(
   outTable.SetInteger("mode", static_cast<std::int32_t>(config.mMode));
   outTable.SetNumber("smart_cutoff", config.mSmartCutoff);
   outTable.SetBoolean("shield", config.mShowShield);
+  outTable.SetInteger("category", config.mCategoryFilter);
+  outTable.SetInteger("content", config.mContent);
+  outTable.SetInteger("placement", config.mPlacement);
+  outTable.SetBoolean("pulse", config.mPulse);
   outTable.SetInteger("palette", ui_StrategicIconHpOutlinePalette);
   outTable.SetNumber("good_cutoff", config.mGoodCutoff);
   outTable.SetNumber("bad_cutoff", config.mBadCutoff);
