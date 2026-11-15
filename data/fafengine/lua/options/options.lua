@@ -835,7 +835,7 @@ do
         if Supported() then
             table.insert(ui.items, {
                 title = "<LOC options_strategic_icon_outline_mode>Strategic Icon HP Outline",
-                tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (0=Off, 1=Color Shift, 2=Sweep).",
+                tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (Off, Color Shift, Sweep).",
                 key = 'strategic_icon_outline_mode',
                 type = 'toggle',
                 default = 0,
@@ -851,6 +851,74 @@ do
                         { text = "<LOC _Off>Off", key = 0 },
                         { text = "<LOC options_outline_colorshift>Color Shift", key = 1 },
                         { text = "<LOC options_outline_sweep>Sweep", key = 2 },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_content>Displayed Outlines",
+                tip = "<LOC options_strategic_icon_outline_content_tip>Choose which health and shield layers to render (HP + Shield, HP Only, Shield Only).",
+                key = 'strategic_icon_outline_content',
+                type = 'toggle',
+                default = 0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ content = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlineContent " .. tostring(value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC options_outline_content_both>HP + Shield", key = 0 },
+                        { text = "<LOC options_outline_content_hp>HP Only", key = 1 },
+                        { text = "<LOC options_outline_content_shield>Shield Only", key = 2 },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_placement>Outline Placement",
+                tip = "<LOC options_strategic_icon_outline_placement_tip>Choose where the outline is displayed around the icon (All Around, Top, Bottom, Split).",
+                key = 'strategic_icon_outline_placement',
+                type = 'toggle',
+                default = 0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ placement = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlinePlacement " .. tostring(value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC options_outline_placement_all>All Around", key = 0 },
+                        { text = "<LOC options_outline_placement_top>Top", key = 1 },
+                        { text = "<LOC options_outline_placement_bottom>Bottom", key = 2 },
+                        { text = "<LOC options_outline_placement_split>Split (Shield Top, HP Bottom)", key = 3 },
+                    },
+                },
+            })
+
+            table.insert(ui.items, {
+                title = "<LOC options_strategic_icon_outline_category>Icon Outline Target",
+                tip = "<LOC options_strategic_icon_outline_category_tip>Restrict health and shield outlines to specific unit categories (All Units, Commander, Commander & Experimental, or Custom mod filter).",
+                key = 'strategic_icon_outline_category',
+                type = 'toggle',
+                default = 0,
+                set = function(key, value, startup)
+                    if SetStrategicIconOutlineConfig then
+                        SetStrategicIconOutlineConfig({ category = value })
+                    else
+                        ConExecute("ui_StrategicIconHpOutlineCategory " .. tostring(value))
+                    end
+                end,
+                custom = {
+                    states = {
+                        { text = "<LOC options_outline_category_all>All Units", key = 0 },
+                        { text = "<LOC options_outline_category_commander>Commander", key = 1 },
+                        { text = "<LOC options_outline_category_commander_experimental>Commander & Experimental", key = 2 },
+                        { text = "<LOC options_outline_category_custom>Custom (Mod)", key = -1 },
                     },
                 },
             })
@@ -875,27 +943,6 @@ do
                         { text = "95%", key = 0.95 },
                         { text = "90%", key = 0.90 },
                         { text = "80%", key = 0.80 },
-                    },
-                },
-            })
-
-            table.insert(ui.items, {
-                title = "<LOC options_strategic_icon_outline_shield>Show Shield Outline",
-                tip = "<LOC options_strategic_icon_outline_shield_tip>Render a concentric outer ring indicating active shield status.",
-                key = 'strategic_icon_outline_shield',
-                type = 'toggle',
-                default = true,
-                set = function(key, value, startup)
-                    if SetStrategicIconOutlineConfig then
-                        SetStrategicIconOutlineConfig({ shield = value })
-                    else
-                        ConExecute("ui_StrategicIconHpOutlineShield " .. (value and "1" or "0"))
-                    end
-                end,
-                custom = {
-                    states = {
-                        { text = "<LOC _On>On", key = true },
-                        { text = "<LOC _Off>Off", key = false },
                     },
                 },
             })

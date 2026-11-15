@@ -179,7 +179,7 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, OptionsTableLoaded)
   EXPECT_EQ(status, 0) << (lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error");
 }
 
-TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllFourOutlineOptionsPresentAndValid)
+TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllSixOutlineOptionsPresentAndValid)
 {
   LuaPlus::LuaState state{LuaPlus::LuaState::LIB_BASE};
   SetupEnvironment(state, true);
@@ -207,7 +207,49 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllFourOutlineOptionsPresentAndVali
     assert(modeKeys[0] and modeKeys[1] and modeKeys[2], "mode state keys mismatch")
     assert(type(mode.set) == 'function', "mode set must be a function")
 
-    -- 2. strategic_icon_outline_smart_cutoff
+    -- 2. strategic_icon_outline_content
+    local content = byKey['strategic_icon_outline_content']
+    assert(content ~= nil, "strategic_icon_outline_content item not found")
+    assert(content.type == 'toggle', "content type must be toggle")
+    assert(content.default == 0, "content default must be 0")
+    assert(type(content.title) == 'string' and string.len(content.title) > 0, "content title missing")
+    assert(type(content.tip) == 'string' and string.len(content.tip) > 0, "content tip missing")
+    assert(content.custom ~= nil and content.custom.states ~= nil, "content states table missing")
+    assert(table.getn(content.custom.states) == 3, "content must have 3 states")
+    local contentKeys = {}
+    for _, s in ipairs(content.custom.states) do contentKeys[s.key] = true end
+    assert(contentKeys[0] and contentKeys[1] and contentKeys[2], "content state keys mismatch")
+    assert(type(content.set) == 'function', "content set must be a function")
+
+    -- 3. strategic_icon_outline_placement
+    local placement = byKey['strategic_icon_outline_placement']
+    assert(placement ~= nil, "strategic_icon_outline_placement item not found")
+    assert(placement.type == 'toggle', "placement type must be toggle")
+    assert(placement.default == 0, "placement default must be 0")
+    assert(type(placement.title) == 'string' and string.len(placement.title) > 0, "placement title missing")
+    assert(type(placement.tip) == 'string' and string.len(placement.tip) > 0, "placement tip missing")
+    assert(placement.custom ~= nil and placement.custom.states ~= nil, "placement states table missing")
+    assert(table.getn(placement.custom.states) == 4, "placement must have 4 states")
+    local placementKeys = {}
+    for _, s in ipairs(placement.custom.states) do placementKeys[s.key] = true end
+    assert(placementKeys[0] and placementKeys[1] and placementKeys[2] and placementKeys[3], "placement state keys mismatch")
+    assert(type(placement.set) == 'function', "placement set must be a function")
+
+    -- 4. strategic_icon_outline_category
+    local category = byKey['strategic_icon_outline_category']
+    assert(category ~= nil, "strategic_icon_outline_category item not found")
+    assert(category.type == 'toggle', "category type must be toggle")
+    assert(category.default == 0, "category default must be 0")
+    assert(type(category.title) == 'string' and string.len(category.title) > 0, "category title missing")
+    assert(type(category.tip) == 'string' and string.len(category.tip) > 0, "category tip missing")
+    assert(category.custom ~= nil and category.custom.states ~= nil, "category states table missing")
+    assert(table.getn(category.custom.states) == 4, "category must have 4 states")
+    local categoryKeys = {}
+    for _, s in ipairs(category.custom.states) do categoryKeys[s.key] = true end
+    assert(categoryKeys[0] and categoryKeys[1] and categoryKeys[2] and categoryKeys[-1], "category state keys mismatch")
+    assert(type(category.set) == 'function', "category set must be a function")
+
+    -- 5. strategic_icon_outline_smart_cutoff
     local cutoff = byKey['strategic_icon_outline_smart_cutoff']
     assert(cutoff ~= nil, "strategic_icon_outline_smart_cutoff item not found")
     assert(cutoff.type == 'toggle', "cutoff type must be toggle")
@@ -221,21 +263,7 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllFourOutlineOptionsPresentAndVali
     assert(cutoffKeys[0.0] and cutoffKeys[1.0] and cutoffKeys[0.95] and cutoffKeys[0.90] and cutoffKeys[0.80], "cutoff state keys mismatch")
     assert(type(cutoff.set) == 'function', "cutoff set must be a function")
 
-    -- 3. strategic_icon_outline_shield
-    local shield = byKey['strategic_icon_outline_shield']
-    assert(shield ~= nil, "strategic_icon_outline_shield item not found")
-    assert(shield.type == 'toggle', "shield type must be toggle")
-    assert(shield.default == true, "shield default must be true")
-    assert(type(shield.title) == 'string' and string.len(shield.title) > 0, "shield title missing")
-    assert(type(shield.tip) == 'string' and string.len(shield.tip) > 0, "shield tip missing")
-    assert(shield.custom ~= nil and shield.custom.states ~= nil, "shield states table missing")
-    assert(table.getn(shield.custom.states) == 2, "shield must have 2 states")
-    local shieldKeys = {}
-    for _, s in ipairs(shield.custom.states) do shieldKeys[s.key] = true end
-    assert(shieldKeys[true] and shieldKeys[false], "shield state keys mismatch")
-    assert(type(shield.set) == 'function', "shield set must be a function")
-
-    -- 4. strategic_icon_outline_palette
+    -- 6. strategic_icon_outline_palette
     local palette = byKey['strategic_icon_outline_palette']
     assert(palette ~= nil, "strategic_icon_outline_palette item not found")
     assert(palette.type == 'toggle', "palette type must be toggle")
@@ -276,11 +304,17 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, SetCallbacksInvokeNativeConfig)
     -- Trigger set on mode
     byKey['strategic_icon_outline_mode'].set('strategic_icon_outline_mode', 2, false)
 
+    -- Trigger set on content
+    byKey['strategic_icon_outline_content'].set('strategic_icon_outline_content', 1, false)
+
+    -- Trigger set on placement
+    byKey['strategic_icon_outline_placement'].set('strategic_icon_outline_placement', 3, false)
+
+    -- Trigger set on category
+    byKey['strategic_icon_outline_category'].set('strategic_icon_outline_category', 2, false)
+
     -- Trigger set on cutoff
     byKey['strategic_icon_outline_smart_cutoff'].set('strategic_icon_outline_smart_cutoff', 0.80, false)
-
-    -- Trigger set on shield
-    byKey['strategic_icon_outline_shield'].set('strategic_icon_outline_shield', false, false)
 
     -- Trigger set on palette
     byKey['strategic_icon_outline_palette'].set('strategic_icon_outline_palette', 2, false)
@@ -291,9 +325,11 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, SetCallbacksInvokeNativeConfig)
   ASSERT_EQ(status, 0) << (lua_tostring(L, -1) ? lua_tostring(L, -1) : "unknown error");
 
   const auto config = moho::GetStrategicIconOutlineConfig();
-  EXPECT_EQ(config.mMode, moho::EStrategicIconOutlineMode::Combined);
+  EXPECT_EQ(config.mMode, moho::EStrategicIconOutlineMode::Sweep);
+  EXPECT_EQ(config.mContent, 1);
+  EXPECT_EQ(config.mPlacement, 3);
+  EXPECT_EQ(config.mCategoryFilter, 2);
   EXPECT_NEAR(config.mSmartCutoff, 0.80f, 0.001f);
-  EXPECT_FALSE(config.mShowShield);
   EXPECT_EQ(moho::ui_StrategicIconHpOutlinePalette, 2);
 }
 
@@ -318,17 +354,21 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, SetCallbacksFallbackToConExecuteWhe
     end
 
     byKey['strategic_icon_outline_mode'].set('strategic_icon_outline_mode', 1, false)
+    byKey['strategic_icon_outline_content'].set('strategic_icon_outline_content', 2, false)
+    byKey['strategic_icon_outline_placement'].set('strategic_icon_outline_placement', 3, false)
+    byKey['strategic_icon_outline_category'].set('strategic_icon_outline_category', 2, false)
     byKey['strategic_icon_outline_smart_cutoff'].set('strategic_icon_outline_smart_cutoff', 0.95, false)
-    byKey['strategic_icon_outline_shield'].set('strategic_icon_outline_shield', false, false)
     byKey['strategic_icon_outline_palette'].set('strategic_icon_outline_palette', 3, false)
 
-    assert(table.getn(executedCommands) == 4, "expected 4 commands, got " .. table.getn(executedCommands))
+    assert(table.getn(executedCommands) == 6, "expected 6 commands, got " .. table.getn(executedCommands))
     assert(string.find(executedCommands[1], "ui_StrategicIconHpOutlineMode 1") ~= nil, "mode command mismatch: " .. executedCommands[1])
-    local _, _, cutoffValStr = string.find(executedCommands[2], "ui_StrategicIconHpOutlineSmartCutoff%s+(%S+)")
-    assert(cutoffValStr ~= nil, "could not parse cutoff command: " .. executedCommands[2])
+    assert(string.find(executedCommands[2], "ui_StrategicIconHpOutlineContent 2") ~= nil, "content command mismatch: " .. executedCommands[2])
+    assert(string.find(executedCommands[3], "ui_StrategicIconHpOutlinePlacement 3") ~= nil, "placement command mismatch: " .. executedCommands[3])
+    assert(string.find(executedCommands[4], "ui_StrategicIconHpOutlineCategory 2") ~= nil, "category command mismatch: " .. executedCommands[4])
+    local _, _, cutoffValStr = string.find(executedCommands[5], "ui_StrategicIconHpOutlineSmartCutoff%s+(%S+)")
+    assert(cutoffValStr ~= nil, "could not parse cutoff command: " .. executedCommands[5])
     assert(math.abs(tonumber(cutoffValStr) - 0.95) < 0.001, "cutoff value mismatch: " .. cutoffValStr)
-    assert(string.find(executedCommands[3], "ui_StrategicIconHpOutlineShield 0") ~= nil, "shield command mismatch: " .. executedCommands[3])
-    assert(string.find(executedCommands[4], "ui_StrategicIconHpOutlinePalette 3") ~= nil, "palette command mismatch: " .. executedCommands[4])
+    assert(string.find(executedCommands[6], "ui_StrategicIconHpOutlinePalette 3") ~= nil, "palette command mismatch: " .. executedCommands[6])
   )lua";
 
   lua_State* L = state.GetCState();
