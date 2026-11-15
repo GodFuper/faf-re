@@ -51,6 +51,30 @@ namespace
     return {};
   }
 
+  std::filesystem::path FindFafengineOptionsLua()
+  {
+    std::error_code ec;
+    const std::filesystem::path wellKnown = "I:/ProjectsFaf/faf-re/data/fafengine/lua/options/options.lua";
+    if (std::filesystem::exists(wellKnown, ec)) {
+      return wellKnown;
+    }
+
+    const std::filesystem::path cur = std::filesystem::current_path(ec);
+    for (const auto& rel : {
+           "data/fafengine/lua/options/options.lua",
+           "../data/fafengine/lua/options/options.lua",
+           "../../data/fafengine/lua/options/options.lua",
+           "../../../data/fafengine/lua/options/options.lua"
+         }) {
+      const std::filesystem::path candidate = cur / rel;
+      if (std::filesystem::exists(candidate, ec)) {
+        return std::filesystem::canonical(candidate, ec);
+      }
+    }
+
+    return {};
+  }
+
   std::string ReadFileToString(const std::filesystem::path& path)
   {
     std::ifstream file(path, std::ios::in | std::ios::binary);
@@ -76,6 +100,7 @@ namespace
     SetVolume = function(v, val) end
     GetCurrentUIState = function() return 'game' end
     ConExecute = function(c) end
+    ConTextMatches = function(c) return {c} end
   )lua";
 
   class StrategicIconHpOutlineOptionsLuaTest : public ::testing::Test
@@ -83,6 +108,8 @@ namespace
   protected:
     std::string mOptionsLuaSource;
     std::filesystem::path mOptionsLuaPath;
+    std::string mEngineHookLuaSource;
+    std::filesystem::path mEngineHookLuaPath;
 
     void SetUp() override
     {
@@ -90,6 +117,11 @@ namespace
       ASSERT_FALSE(mOptionsLuaPath.empty()) << "Could not locate fa/lua/options/options.lua";
       mOptionsLuaSource = ReadFileToString(mOptionsLuaPath);
       ASSERT_FALSE(mOptionsLuaSource.empty()) << "options.lua was empty or could not be read: " << mOptionsLuaPath;
+
+      mEngineHookLuaPath = FindFafengineOptionsLua();
+      if (!mEngineHookLuaPath.empty()) {
+        mEngineHookLuaSource = ReadFileToString(mEngineHookLuaPath);
+      }
 
       // Reset native config to defaults
       moho::StrategicIconOutlineConfig def;
@@ -118,6 +150,11 @@ namespace
 
       status = lua_dostring(L, mOptionsLuaSource.c_str());
       ASSERT_EQ(status, 0) << "Failed to load/execute options.lua: " << lua_tostring(L, -1);
+
+      if (!mEngineHookLuaSource.empty()) {
+        status = lua_dostring(L, mEngineHookLuaSource.c_str());
+        ASSERT_EQ(status, 0) << "Failed to load/execute fafengine options.lua: " << lua_tostring(L, -1);
+      }
     }
   };
 } // namespace
