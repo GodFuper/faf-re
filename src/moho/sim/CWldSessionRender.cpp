@@ -176,20 +176,34 @@ namespace moho
 
   static StrategicIconOutlineConfig sStrategicIconOutlineConfig;
   static fa::string sStrategicIconCustomCategoryName;
-  static const EntityCategorySet* sStrategicIconCustomCategorySet = nullptr;
+  static EntityCategorySet sStrategicIconCustomCategorySet;
+  static bool sHasCustomCategorySet = false;
+
+  static const fa::string kCatCommand("COMMAND");
+  static const fa::string kCatSubCommand("SUBCOMMANDER");
+  static const fa::string kCatExperimental("EXPERIMENTAL");
 
   void SetStrategicIconCustomCategory(const char* const categoryName)
   {
-    if (categoryName != nullptr) {
+    if (categoryName != nullptr && categoryName[0] != '\0') {
       sStrategicIconCustomCategoryName = categoryName;
     } else {
       sStrategicIconCustomCategoryName.clear();
     }
+    sHasCustomCategorySet = false;
+    sStrategicIconCustomCategorySet = EntityCategorySet{};
   }
 
   void SetStrategicIconCustomCategorySet(const EntityCategorySet* const categorySet)
   {
-    sStrategicIconCustomCategorySet = categorySet;
+    if (categorySet != nullptr) {
+      sStrategicIconCustomCategorySet = *categorySet;
+      sHasCustomCategorySet = true;
+    } else {
+      sStrategicIconCustomCategorySet = EntityCategorySet{};
+      sHasCustomCategorySet = false;
+    }
+    sStrategicIconCustomCategoryName.clear();
   }
 
   bool UnitPassesStrategicIconCategoryFilter(const UserEntity* const entity, const int filterMode)
@@ -201,15 +215,15 @@ namespace moho
       return true;
     }
     if (filterMode == 1) {
-      return entity->IsInCategory("COMMAND") || entity->IsInCategory("SUBCOMMANDER");
+      return entity->IsInCategory(kCatCommand) || entity->IsInCategory(kCatSubCommand);
     }
     if (filterMode == 2) {
-      return entity->IsInCategory("COMMAND") || entity->IsInCategory("SUBCOMMANDER") || entity->IsInCategory("EXPERIMENTAL");
+      return entity->IsInCategory(kCatCommand) || entity->IsInCategory(kCatSubCommand) || entity->IsInCategory(kCatExperimental);
     }
     if (filterMode == -1) {
-      if (sStrategicIconCustomCategorySet != nullptr) {
+      if (sHasCustomCategorySet) {
         if (entity->mParams.mBlueprint != nullptr) {
-          return sStrategicIconCustomCategorySet->Bits().Contains(static_cast<unsigned int>(entity->mParams.mBlueprint->mBlueprintOrdinal));
+          return sStrategicIconCustomCategorySet.Bits().Contains(static_cast<unsigned int>(entity->mParams.mBlueprint->mBlueprintOrdinal));
         }
         return false;
       }
@@ -237,9 +251,6 @@ namespace moho
     config.mShowShield = (ui_StrategicIconHpOutlineShield != 0);
     config.mCategoryFilter = ui_StrategicIconHpOutlineCategory;
     config.mContent = ui_StrategicIconHpOutlineContent;
-    if (!config.mShowShield && config.mContent == 0) {
-      config.mContent = 1;
-    }
     config.mPlacement = ui_StrategicIconHpOutlinePlacement;
     config.mPulse = (ui_StrategicIconHpOutlinePulse != 0);
 
@@ -286,6 +297,11 @@ namespace moho
     ui_StrategicIconHpOutlineContent = config.mContent;
     ui_StrategicIconHpOutlinePlacement = config.mPlacement;
     ui_StrategicIconHpOutlinePulse = config.mPulse ? 1 : 0;
+    if (config.mCategoryFilter >= 0) {
+      sStrategicIconCustomCategoryName.clear();
+      sHasCustomCategorySet = false;
+      sStrategicIconCustomCategorySet = EntityCategorySet{};
+    }
   }
 
   // Per-army team-color palette, distinct from `StrategicIconAux`'s own
@@ -2188,8 +2204,9 @@ namespace moho
 
       if (candidate.mData.mUnit != nullptr && !candidate.mData.mIsFormationGhost) {
         UserEntity* const entity = candidate.mData.mUnit;
+        const UserUnit* const unit = entity->IsUserUnit();
         float shieldRatio = 0.0f;
-        if (const UserUnit* const unit = entity->IsUserUnit(); unit != nullptr) {
+        if (unit != nullptr) {
           shieldRatio = unit->mUnitVarDat.mShieldRatio;
         }
         record.mHealthShield = StrategicIconInstance::PackHealthAndShield(
@@ -2198,7 +2215,7 @@ namespace moho
           shieldRatio,
           candidate.mData.mIsFriendly
         );
-        if (!UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
+        if (unit == nullptr || !UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
           record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
         }
       } else {
@@ -2903,7 +2920,7 @@ namespace moho
           shieldRatio,
           source.Has(StrategicIconSource::kFriendly)
         );
-        if (!UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
+        if (asUnit == nullptr || !UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
           record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
         }
 

@@ -227,4 +227,29 @@ TEST_F(StrategicIconOutlineLuaBindingTest, CategoryContentPlacementPulseRoundtri
   EXPECT_EQ(config.mCategoryFilter, 2);
   EXPECT_EQ(config.mContent, 0);
   EXPECT_EQ(config.mPlacement, 3);
+
+  // 4. Verify content = 0 does not mutate to 1 when shield = false
+  const char* scriptContentShield = R"(
+    SetStrategicIconOutlineConfig({
+      content = 0,
+      shield = false
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg.content == 0, "content corrupted on shield=false: " .. tostring(cfg.content))
+    assert(cfg.shield == false, "shield mismatch")
+  )";
+  ExecuteLua(scriptContentShield);
+  config = moho::GetStrategicIconOutlineConfig();
+  EXPECT_EQ(config.mContent, 0);
+  EXPECT_FALSE(config.mShowShield);
+
+  // 5. Test invalid table category does not crash (caught gracefully)
+  const char* scriptInvalidCat = R"(
+    SetStrategicIconOutlineConfig({
+      category = { foo = "bar" }
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg ~= nil)
+  )";
+  ExecuteLua(scriptInvalidCat);
 }

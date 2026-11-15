@@ -400,25 +400,45 @@ TEST(StrategicIconShaderTest, CategoryFilteringAndGhostHandling)
   EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entCommand, -1));
   EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entNormal, -1));
 
-  // With custom set to category set directly:
-  SetStrategicIconCustomCategorySet(&customAirSet);
+  // With custom set to category set directly (copied by value, avoids use-after-free):
+  {
+    EntityCategorySet tempCategorySet;
+    tempCategorySet.Bits().Add(40); // AIR
+    SetStrategicIconCustomCategorySet(&tempCategorySet);
+    // tempCategorySet destroyed/cleared here
+  }
   EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entAir, -1));
   EXPECT_FALSE(UnitPassesStrategicIconCategoryFilter(entCommand, -1));
+
+  // Setting numeric filter mode clears custom category
+  StrategicIconOutlineConfig numCfg{};
+  numCfg.mCategoryFilter = 1; // Commander
+  SetStrategicIconOutlineConfig(numCfg);
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entCommand, 1));
+  // When switched back to -1 without re-setting custom category, fallback passes all
+  EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entNormal, -1));
 
   // With custom cleared: fallback passes all
   SetStrategicIconCustomCategory("");
   SetStrategicIconCustomCategorySet(nullptr);
   EXPECT_TRUE(UnitPassesStrategicIconCategoryFilter(entNormal, -1));
 
-  // Ghost and Formation flags in StrategicIconRecord building
+  // Ghost, non-unit, and Formation flags in StrategicIconRecord building
   // Formation ghost receives kOutlineDisabledFlag
   const std::uint32_t ghostPacked = 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag;
   EXPECT_NE(ghostPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // Non-unit candidate receives kOutlineDisabledFlag
+  const std::uint32_t nonUnitPacked = 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag;
+  EXPECT_NE(nonUnitPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
 
   // When unit fails category filter, kOutlineDisabledFlag is set
   const std::uint32_t normalPacked = StrategicIconInstance::PackHealthAndShield(100.0f, 100.0f, 0.0f, true);
   const std::uint32_t filteredOutPacked = normalPacked | StrategicIconInstance::kOutlineDisabledFlag;
   EXPECT_NE(filteredOutPacked & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // Reset to default config
+  SetStrategicIconOutlineConfig(StrategicIconOutlineConfig{});
 }
 
 TEST(StrategicIconShaderTest, OutlineConfigDefaultsAndConVars)

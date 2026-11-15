@@ -10,6 +10,7 @@
 #include "moho/movie/sfd/IndependentSfdBackend.h"
 #include "moho/misc/StartupHelpers.h"
 #include "moho/entity/EntityCategoryReflection.h"
+#include "gpg/core/reflection/BadRefCast.h"
 #include "legacy/containers/AutoPtr.h"
 #include "legacy/containers/Set.h"
 #include <algorithm>
@@ -1308,26 +1309,42 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
   if (categoryObj.IsNumber()) {
     config.mCategoryFilter = categoryObj.GetInteger();
     ui_StrategicIconHpOutlineCategory = config.mCategoryFilter;
+    if (config.mCategoryFilter >= 0) {
+      SetStrategicIconCustomCategory("");
+      SetStrategicIconCustomCategorySet(nullptr);
+    }
   } else if (categoryObj.IsString()) {
     const char* str = categoryObj.GetString();
     if (str != nullptr) {
       if (_stricmp(str, "all") == 0) {
         config.mCategoryFilter = 0;
+        SetStrategicIconCustomCategory("");
+        SetStrategicIconCustomCategorySet(nullptr);
       } else if (_stricmp(str, "commander") == 0 || _stricmp(str, "command") == 0) {
         config.mCategoryFilter = 1;
+        SetStrategicIconCustomCategory("");
+        SetStrategicIconCustomCategorySet(nullptr);
       } else if (_stricmp(str, "experimental") == 0 || _stricmp(str, "commander_exp") == 0 || _stricmp(str, "commander+exp") == 0) {
         config.mCategoryFilter = 2;
+        SetStrategicIconCustomCategory("");
+        SetStrategicIconCustomCategorySet(nullptr);
       } else {
         config.mCategoryFilter = -1;
         SetStrategicIconCustomCategory(str);
       }
       ui_StrategicIconHpOutlineCategory = config.mCategoryFilter;
     }
-  } else if (categoryObj.IsUserData()) {
-    EntityCategorySet* catSet = func_GetCObj_EntityCategory(categoryObj);
-    config.mCategoryFilter = -1;
-    ui_StrategicIconHpOutlineCategory = -1;
-    SetStrategicIconCustomCategorySet(catSet);
+  } else if (categoryObj.IsUserData() || categoryObj.IsTable()) {
+    try {
+      EntityCategorySet* const catSet = func_GetCObj_EntityCategory(categoryObj);
+      if (catSet != nullptr) {
+        config.mCategoryFilter = -1;
+        ui_StrategicIconHpOutlineCategory = -1;
+        SetStrategicIconCustomCategorySet(catSet);
+      }
+    } catch (const gpg::BadRefCast&) {
+      gpg::Warnf("SetStrategicIconOutlineConfig: invalid category object");
+    }
   }
 
   const LuaPlus::LuaObject contentObj = table["content"];
