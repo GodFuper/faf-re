@@ -372,15 +372,18 @@ namespace moho
     const StrategicIconOutlineConfig outlineConfig = moho::GetStrategicIconOutlineConfig();
     constants.outlineMode = static_cast<std::uint32_t>(outlineConfig.mMode);
     constants.smartCutoff = outlineConfig.mSmartCutoff;
-    constants.outlineContent = outlineConfig.mShowShield ? 0U : 1U;
+    constants.outlineContent = static_cast<std::uint32_t>(outlineConfig.mContent);
+    if (!outlineConfig.mShowShield && outlineConfig.mContent == 0) {
+      constants.outlineContent = 1U;
+    }
     constants.goodCutoff = outlineConfig.mGoodCutoff;
     constants.badCutoff = outlineConfig.mBadCutoff;
     constants.colorGood = outlineConfig.mColorGood;
     constants.colorMed = outlineConfig.mColorMed;
     constants.colorBad = outlineConfig.mColorBad;
     constants.colorShield = outlineConfig.mColorShield;
-    constants.outlinePlacement = 0U;
-    constants.pulseEnabled = 1U;
+    constants.outlinePlacement = static_cast<std::uint32_t>(outlineConfig.mPlacement);
+    constants.pulseEnabled = outlineConfig.mPulse ? 1U : 0U;
     constants.animTime = GetIconOutlineAnimTime();
 
     gpg::gal::GpuDrawCall call{};

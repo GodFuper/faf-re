@@ -232,9 +232,6 @@ namespace moho
       }
       return true;
     }
-    if (filterMode <= 0) {
-      return true;
-    }
     return true;
   }
 
