@@ -257,10 +257,10 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllSixOutlineOptionsPresentAndValid
     assert(type(cutoff.title) == 'string' and string.len(cutoff.title) > 0, "cutoff title missing")
     assert(type(cutoff.tip) == 'string' and string.len(cutoff.tip) > 0, "cutoff tip missing")
     assert(cutoff.custom ~= nil and cutoff.custom.states ~= nil, "cutoff states table missing")
-    assert(table.getn(cutoff.custom.states) == 5, "cutoff must have 5 states")
+    assert(table.getn(cutoff.custom.states) == 9, "cutoff must have 9 states")
     local cutoffKeys = {}
     for _, s in ipairs(cutoff.custom.states) do cutoffKeys[s.key] = true end
-    assert(cutoffKeys[0.0] and cutoffKeys[1.0] and cutoffKeys[0.95] and cutoffKeys[0.90] and cutoffKeys[0.80], "cutoff state keys mismatch")
+    assert(cutoffKeys[0.0] and cutoffKeys[1.0] and cutoffKeys[0.95] and cutoffKeys[0.90] and cutoffKeys[0.80] and cutoffKeys[0.75] and cutoffKeys[0.50] and cutoffKeys[0.40] and cutoffKeys[0.25], "cutoff state keys mismatch")
     assert(type(cutoff.set) == 'function', "cutoff set must be a function")
 
     -- 6. strategic_icon_outline_palette

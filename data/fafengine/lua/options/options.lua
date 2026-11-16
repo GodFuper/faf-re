@@ -925,7 +925,7 @@ do
 
             table.insert(ui.items, {
                 title = "<LOC options_strategic_icon_outline_cutoff>Smart Mode Cutoff",
-                tip = "<LOC options_strategic_icon_outline_cutoff_tip>Filter outline by health threshold: 'Disable' shows outlines on all units; 100%-80% hides outlines when unit health is at or above that percentage.",
+                tip = "<LOC options_strategic_icon_outline_cutoff_tip>Filter outline by health threshold: 'Disable' shows outlines on all units; 100%-25% hides outlines when unit health is at or above that percentage.",
                 key = 'strategic_icon_outline_smart_cutoff',
                 type = 'toggle',
                 default = 0.0,
@@ -943,6 +943,10 @@ do
                         { text = "95%", key = 0.95 },
                         { text = "90%", key = 0.90 },
                         { text = "80%", key = 0.80 },
+                        { text = "75%", key = 0.75 },
+                        { text = "50%", key = 0.50 },
+                        { text = "40%", key = 0.40 },
+                        { text = "25%", key = 0.25 },
                     },
                 },
             })

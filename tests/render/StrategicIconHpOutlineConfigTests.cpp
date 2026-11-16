@@ -71,6 +71,12 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
   EXPECT_FLOAT_EQ(synced.mSmartCutoff, 0.80f);
   EXPECT_TRUE(synced.mShowShield);
 
+  // Test 50% and 40% cutoff thresholds
+  ui_StrategicIconHpOutlineSmartCutoff = 0.50f;
+  EXPECT_FLOAT_EQ(GetStrategicIconOutlineConfig().mSmartCutoff, 0.50f);
+  ui_StrategicIconHpOutlineSmartCutoff = 0.40f;
+  EXPECT_FLOAT_EQ(GetStrategicIconOutlineConfig().mSmartCutoff, 0.40f);
+
   // Test invalid out-of-bounds ConVar mode falls back safely to None (e.g. 3, 99)
   ui_StrategicIconHpOutlineMode = 3;
   EXPECT_EQ(GetStrategicIconOutlineConfig().mMode, EStrategicIconOutlineMode::None);
