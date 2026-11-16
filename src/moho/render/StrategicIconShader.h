@@ -13,7 +13,7 @@
 // layers 0..3: point sample, and replace the texel's colour with the vertex
 // colour where the texel is close to mid grey; alpha from the texture; blended
 // src-alpha/inv-src-alpha into RGB only, no depth. Layer 4 procedurally generates
-// an antialiased inner HP arc and outer shield ring.
+// a guaranteed inner black separator, an antialiased HP arc, and an outer shield ring.
 //
 // Bindings follow gpg/gal/GpuDriven.h (b0, t0..t3 buffers, t4 texture, s0),
 // so DXC builds the same source for D3D12 (DXIL) and Vulkan (SPIR-V).
@@ -227,7 +227,7 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
 
     float2 step = input.texelStep;
 
-    // Inner band (radius 1 texel): HP outline directly hugging the icon silhouette
+    // Band 1 (radius 1 texel): Guaranteed black separator hugging the icon silhouette
     float aN  = SampleIconAlpha(input.uv + float2( 0.0, -1.0) * step, input.slotUv);
     float aS  = SampleIconAlpha(input.uv + float2( 0.0,  1.0) * step, input.slotUv);
     float aW  = SampleIconAlpha(input.uv + float2(-1.0,  0.0) * step, input.slotUv);
@@ -238,22 +238,34 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     float aSE = SampleIconAlpha(input.uv + float2( 1.0,  1.0) * step, input.slotUv);
     float maxA1 = max(max(max(aN, aS), max(aW, aE)), max(max(aNW, aNE), max(aSW, aSE)));
 
-    // Outer band (radius 2 texels): Shield outline
-    float maxA2 = 0.0;
-    if (hasShield && allowShieldPlacement)
+    // Band 2 (radius 2 texels): Inner meter (HP outline, or Shield outline if shield-only)
+    float aN2  = SampleIconAlpha(input.uv + float2( 0.0, -2.0) * step, input.slotUv);
+    float aS2  = SampleIconAlpha(input.uv + float2( 0.0,  2.0) * step, input.slotUv);
+    float aW2  = SampleIconAlpha(input.uv + float2(-2.0,  0.0) * step, input.slotUv);
+    float aE2  = SampleIconAlpha(input.uv + float2( 2.0,  0.0) * step, input.slotUv);
+    float aNW2 = SampleIconAlpha(input.uv + float2(-1.5, -1.5) * step, input.slotUv);
+    float aNE2 = SampleIconAlpha(input.uv + float2( 1.5, -1.5) * step, input.slotUv);
+    float aSW2 = SampleIconAlpha(input.uv + float2(-1.5,  1.5) * step, input.slotUv);
+    float aSE2 = SampleIconAlpha(input.uv + float2( 1.5,  1.5) * step, input.slotUv);
+    float maxA2 = max(max(max(aN2, aS2), max(aW2, aE2)), max(max(aNW2, aNE2), max(aSW2, aSE2)));
+
+    // Band 3 (radius 3 texels): Outer meter (Shield outline when both HP and Shield are concentric)
+    float maxA3 = 0.0;
+    bool hasBothMeters = showHp && !hideHp && hasShield && allowHpPlacement && allowShieldPlacement;
+    if (hasBothMeters)
     {
-        float aN2  = SampleIconAlpha(input.uv + float2( 0.0, -2.0) * step, input.slotUv);
-        float aS2  = SampleIconAlpha(input.uv + float2( 0.0,  2.0) * step, input.slotUv);
-        float aW2  = SampleIconAlpha(input.uv + float2(-2.0,  0.0) * step, input.slotUv);
-        float aE2  = SampleIconAlpha(input.uv + float2( 2.0,  0.0) * step, input.slotUv);
-        float aNW2 = SampleIconAlpha(input.uv + float2(-1.5, -1.5) * step, input.slotUv);
-        float aNE2 = SampleIconAlpha(input.uv + float2( 1.5, -1.5) * step, input.slotUv);
-        float aSW2 = SampleIconAlpha(input.uv + float2(-1.5,  1.5) * step, input.slotUv);
-        float aSE2 = SampleIconAlpha(input.uv + float2( 1.5,  1.5) * step, input.slotUv);
-        maxA2 = max(max(max(aN2, aS2), max(aW2, aE2)), max(max(aNW2, aNE2), max(aSW2, aSE2)));
+        float aN3  = SampleIconAlpha(input.uv + float2( 0.0, -3.0) * step, input.slotUv);
+        float aS3  = SampleIconAlpha(input.uv + float2( 0.0,  3.0) * step, input.slotUv);
+        float aW3  = SampleIconAlpha(input.uv + float2(-3.0,  0.0) * step, input.slotUv);
+        float aE3  = SampleIconAlpha(input.uv + float2( 3.0,  0.0) * step, input.slotUv);
+        float aNW3 = SampleIconAlpha(input.uv + float2(-2.2, -2.2) * step, input.slotUv);
+        float aNE3 = SampleIconAlpha(input.uv + float2( 2.2, -2.2) * step, input.slotUv);
+        float aSW3 = SampleIconAlpha(input.uv + float2(-2.2,  2.2) * step, input.slotUv);
+        float aSE3 = SampleIconAlpha(input.uv + float2( 2.2,  2.2) * step, input.slotUv);
+        maxA3 = max(max(max(aN3, aS3), max(aW3, aE3)), max(max(aNW3, aNE3), max(aSW3, aSE3)));
     }
 
-    if (maxA1 <= 0.3 && maxA2 <= 0.3)
+    if (maxA1 <= 0.3 && maxA2 <= 0.3 && maxA3 <= 0.3)
     {
         discard;
     }
@@ -267,10 +279,20 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     }
     float normAngle = angle / kTwoPi;
 
-    // HP outline determination
-    bool isHp = (maxA1 > 0.3) && allowHpPlacement && showHp;
+    bool hasHpMeter = showHp && !hideHp && allowHpPlacement;
+    bool hasShieldMeter = hasShield && allowShieldPlacement;
+
+    // HP color smoothly interpolated from ColorBad to ColorMed to ColorGood
+    float4 cBad = UnpackArgb(ColorBad);
+    float4 cMed = UnpackArgb(ColorMed);
+    float4 cGood = UnpackArgb(ColorGood);
+    float denom = max(GoodCutoff - BadCutoff, 0.001);
+    float t = saturate((healthFrac - BadCutoff) / denom);
+    float4 hpColor = t < 0.5 ? lerp(cBad, cMed, t * 2.0) : lerp(cMed, cGood, (t - 0.5) * 2.0);
+    float4 shieldColor = UnpackArgb(ColorShield);
+
     float hpAlpha = 0.0;
-    if (isHp && !hideHp)
+    if (hasHpMeter)
     {
         if (OutlineMode == 1)
         {
@@ -288,31 +310,56 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
         }
     }
 
-    // HP color smoothly interpolated from ColorBad to ColorMed to ColorGood
-    float4 cBad = UnpackArgb(ColorBad);
-    float4 cMed = UnpackArgb(ColorMed);
-    float4 cGood = UnpackArgb(ColorGood);
-    float denom = max(GoodCutoff - BadCutoff, 0.001);
-    float t = saturate((healthFrac - BadCutoff) / denom);
-    float4 hpColor = t < 0.5 ? lerp(cBad, cMed, t * 2.0) : lerp(cMed, cGood, (t - 0.5) * 2.0);
-
-    // Shield outline determination (band 2, outside HP band)
     float shieldAlpha = 0.0;
-    float4 shieldColor = UnpackArgb(ColorShield);
-    if (!isHp && maxA2 > 0.3 && hasShield && allowShieldPlacement)
+    if (hasShieldMeter)
     {
-        float shieldAngleAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
-        shieldAlpha = shieldAngleAlpha;
+        shieldAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
     }
 
-    float totalAlpha = saturate(hpAlpha + shieldAlpha);
-    if (totalAlpha < 0.01)
+    // Band 1: Guaranteed black separator
+    if (maxA1 > 0.3)
     {
+        if (hasHpMeter || hasShieldMeter)
+        {
+            return float4(0.0, 0.0, 0.0, 1.0);
+        }
         discard;
     }
 
-    float3 rgb = (hpColor.rgb * hpAlpha + shieldColor.rgb * shieldAlpha) / max(hpAlpha + shieldAlpha, 0.0001);
-    return float4(rgb, totalAlpha);
+    // Band 2: Inner meter (HP if present, otherwise Shield)
+    if (maxA2 > 0.3)
+    {
+        if (hasHpMeter)
+        {
+            if (hpAlpha < 0.01)
+            {
+                discard;
+            }
+            return float4(hpColor.rgb, hpAlpha);
+        }
+        if (hasShieldMeter)
+        {
+            if (shieldAlpha < 0.01)
+            {
+                discard;
+            }
+            return float4(shieldColor.rgb, shieldAlpha);
+        }
+        discard;
+    }
+
+    // Band 3: Outer meter (Shield when both HP and Shield are active on this side)
+    if (maxA3 > 0.3 && hasBothMeters)
+    {
+        if (shieldAlpha < 0.01)
+        {
+            discard;
+        }
+        return float4(shieldColor.rgb, shieldAlpha);
+    }
+
+    discard;
+    return float4(0.0, 0.0, 0.0, 0.0);
 }
 )hlsl";
 } // namespace moho

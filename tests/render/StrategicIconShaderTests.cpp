@@ -84,6 +84,9 @@ TEST(StrategicIconShaderTest, ShaderSourceContainsOutlineTokens)
   EXPECT_NE(source.find("healthShield"), std::string_view::npos);
   EXPECT_NE(source.find("0x80000000u"), std::string_view::npos);
   EXPECT_NE(source.find("32767.0"), std::string_view::npos);
+  EXPECT_NE(source.find("hasBothMeters"), std::string_view::npos);
+  EXPECT_NE(source.find("hasHpMeter"), std::string_view::npos);
+  EXPECT_NE(source.find("hasShieldMeter"), std::string_view::npos);
 }
 
 TEST(StrategicIconShaderTest, CompilesVertexAndPixelShadersD3D11)
