@@ -151,6 +151,61 @@ namespace moho
     return ((shieldPacked & 0x7FFFU) << 16U) | (toUnorm16(healthFraction) & 0xFFFFU);
   }
 
+  std::uint32_t StrategicIconRenderer::ResolveHealthAndShield(
+    const std::uint32_t entityId,
+    const bool isFriendly,
+    const bool isSeenNow,
+    const float liveHealth,
+    const float liveMaxHealth,
+    const float liveShieldRatio
+  )
+  {
+    if (isFriendly) {
+      return StrategicIconInstance::PackHealthAndShield(liveHealth, liveMaxHealth, liveShieldRatio, true);
+    }
+
+    if (!mEnemyReconState) {
+      mEnemyReconState = std::make_unique<EnemyReconState>();
+    }
+
+    std::lock_guard<std::mutex> lock(mEnemyReconState->mMutex);
+    if (isSeenNow) {
+      mEnemyReconState->mMap[entityId] = EnemyReconData{
+        .mHealth = liveHealth,
+        .mMaxHealth = liveMaxHealth,
+        .mShieldRatio = liveShieldRatio
+      };
+      return StrategicIconInstance::PackHealthAndShield(liveHealth, liveMaxHealth, liveShieldRatio, false);
+    }
+
+    const auto it = mEnemyReconState->mMap.find(entityId);
+    if (it != mEnemyReconState->mMap.end()) {
+      const EnemyReconData& cached = it->second;
+      return StrategicIconInstance::PackHealthAndShield(cached.mHealth, cached.mMaxHealth, cached.mShieldRatio, false);
+    }
+
+    // Unscouted enemy (e.g. radar blip only): HP outline disabled.
+    return 0x0000FFFFu | StrategicIconInstance::kOutlineDisabledFlag;
+  }
+
+  void StrategicIconRenderer::ClearEnemyRecon()
+  {
+    if (!mEnemyReconState) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mEnemyReconState->mMutex);
+    mEnemyReconState->mMap.clear();
+  }
+
+  void StrategicIconRenderer::RemoveEnemyRecon(const std::uint32_t entityId)
+  {
+    if (!mEnemyReconState) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(mEnemyReconState->mMutex);
+    (void)mEnemyReconState->mMap.erase(entityId);
+  }
+
   StrategicIconRenderer& StrategicIconRenderer::Get()
   {
     static StrategicIconRenderer sRenderer;

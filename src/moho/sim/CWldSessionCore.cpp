@@ -398,6 +398,7 @@ namespace moho
       }
     }
 
+    StrategicIconRenderer::Get().ClearEnemyRecon();
     gActiveWldSession = this;
   }
 
@@ -406,6 +407,7 @@ namespace moho
    */
   CWldSession::~CWldSession()
   {
+    StrategicIconRenderer::Get().ClearEnemyRecon();
     // Partial lift of 0x00893A60: core owner releases + recovered shared/weak cleanup.
 
     // 0x00893A88..0x00893A99: viewport-owned border meshes borrow the
@@ -884,6 +886,7 @@ namespace moho
     }
 
     (void)mEntities.erase(static_cast<std::uint32_t>(entity->mParams.mEntityId));
+    StrategicIconRenderer::Get().RemoveEnemyRecon(static_cast<std::uint32_t>(entity->mParams.mEntityId));
   }
 
   /**
@@ -902,6 +905,7 @@ namespace moho
     }
 
     (void)mEntities.erase(static_cast<std::uint32_t>(entity->mParams.mEntityId));
+    StrategicIconRenderer::Get().RemoveEnemyRecon(static_cast<std::uint32_t>(entity->mParams.mEntityId));
 
     // The flag is what keeps the render side from treating the entity as live
     // while it finishes its death animation; 0x008941FA writes it right before

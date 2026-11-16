@@ -2206,11 +2206,15 @@ namespace moho
         if (unit != nullptr) {
           shieldRatio = unit->mUnitVarDat.mShieldRatio;
         }
-        record.mHealthShield = StrategicIconInstance::PackHealthAndShield(
+        constexpr std::uint32_t kIntelHealthValidMask = 0x08u;
+        const bool isSeenNow = unit == nullptr || (unit->mIntelStateFlags & kIntelHealthValidMask) != 0u;
+        record.mHealthShield = StrategicIconRenderer::Get().ResolveHealthAndShield(
+          entity->mParams.mEntityId,
+          candidate.mData.mIsFriendly,
+          isSeenNow,
           entity->mVariableData.mHealth,
           entity->mVariableData.mMaxHealth,
-          shieldRatio,
-          candidate.mData.mIsFriendly
+          shieldRatio
         );
         if (unit == nullptr || !UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
           record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
@@ -2911,11 +2915,15 @@ namespace moho
         if (asUnit != nullptr) {
           shieldRatio = asUnit->mUnitVarDat.mShieldRatio;
         }
-        record.mHealthShield = StrategicIconInstance::PackHealthAndShield(
+        constexpr std::uint32_t kIntelHealthValidMask = 0x08u;
+        const bool isSeenNow = asUnit == nullptr || (asUnit->mIntelStateFlags & kIntelHealthValidMask) != 0u;
+        record.mHealthShield = gpuIcons.ResolveHealthAndShield(
+          entity->mParams.mEntityId,
+          source.Has(StrategicIconSource::kFriendly),
+          isSeenNow,
           entity->mVariableData.mHealth,
           entity->mVariableData.mMaxHealth,
-          shieldRatio,
-          source.Has(StrategicIconSource::kFriendly)
+          shieldRatio
         );
         if (asUnit == nullptr || !UnitPassesStrategicIconCategoryFilter(entity, ui_StrategicIconHpOutlineCategory)) {
           record.mHealthShield |= StrategicIconInstance::kOutlineDisabledFlag;
@@ -3050,6 +3058,9 @@ namespace moho
           sourceSet->mCamera = camera;
         }
         const std::uint64_t frustumRebuild = CAM_FrustumUnitsRebuildCount();
+        if (sourceSet->mFocusArmy != focusArmy) {
+          gpuIcons.ClearEnemyRecon();
+        }
         if (
           sourceSet->mSession != &session || sourceSet->mBeat != gUserSyncBeats ||
           sourceSet->mFrustumRebuild != frustumRebuild || sourceSet->mFocusArmy != focusArmy ||

@@ -93,4 +93,139 @@ TEST(StrategicIconInstancePackingTest, EnemyShieldIsStrictlyBinaryFogOfWar)
   EXPECT_EQ(packedEnemyNegative >> 16, 0u);
 }
 
+TEST(StrategicIconInstancePackingTest, FriendlyUnitsAlwaysReportLiveHealthAndShield)
+{
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  renderer.ClearEnemyRecon();
+
+  const std::uint32_t friendlyId = 1001u;
+  // Friendly unit seen in LOS
+  const std::uint32_t packedSeen = renderer.ResolveHealthAndShield(
+    friendlyId,
+    true,  // isFriendly
+    true,  // isSeenNow
+    400.0f, 1000.0f, 0.5f
+  );
+  EXPECT_EQ(packedSeen & 0xFFFFu, static_cast<std::uint32_t>(std::round(0.4f * 65535.0f)));
+  EXPECT_EQ((packedSeen >> 16) & 0x7FFFu, static_cast<std::uint32_t>(std::round(0.5f * 32767.0f)));
+  EXPECT_EQ(packedSeen & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // Friendly unit in fog of war still reports live telemetry
+  const std::uint32_t packedFog = renderer.ResolveHealthAndShield(
+    friendlyId,
+    true,  // isFriendly
+    false, // isSeenNow (in fog)
+    300.0f, 1000.0f, 0.25f
+  );
+  EXPECT_EQ(packedFog & 0xFFFFu, static_cast<std::uint32_t>(std::round(0.3f * 65535.0f)));
+  EXPECT_EQ((packedFog >> 16) & 0x7FFFu, static_cast<std::uint32_t>(std::round(0.25f * 32767.0f)));
+}
+
+TEST(StrategicIconInstancePackingTest, EnemyInFogOfWarFreezesLastKnownHealthAndShield)
+{
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  renderer.ClearEnemyRecon();
+
+  const std::uint32_t enemyId = 2002u;
+
+  // 1. Enemy scouted in direct LOS with 80% HP and active shield
+  const std::uint32_t scouted = renderer.ResolveHealthAndShield(
+    enemyId,
+    false, // isFriendly
+    true,  // isSeenNow (direct optical LOS)
+    800.0f, 1000.0f, 1.0f
+  );
+  const std::uint32_t expectedHp80 = static_cast<std::uint32_t>(std::round(0.8f * 65535.0f));
+  EXPECT_EQ(scouted & 0xFFFFu, expectedHp80);
+  EXPECT_EQ((scouted >> 16) & 0x7FFFu, 0x7FFFu); // Enemy binary full shield
+  EXPECT_EQ(scouted & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // 2. Enemy retreats into Fog of War (isSeenNow = false).
+  // Live health drops to 20% due to blind artillery fire, shield drops to 0%.
+  const std::uint32_t fogHit = renderer.ResolveHealthAndShield(
+    enemyId,
+    false, // isFriendly
+    false, // isSeenNow (in fog of war!)
+    200.0f, 1000.0f, 0.0f
+  );
+
+  // CRITICAL: The outline must NOT reveal the new 20% HP or broken shield!
+  // It MUST match the last scouted state (80% HP and active shield).
+  EXPECT_EQ(fogHit & 0xFFFFu, expectedHp80);
+  EXPECT_EQ((fogHit >> 16) & 0x7FFFu, 0x7FFFu);
+  EXPECT_EQ(fogHit, scouted);
+
+  // 3. A scout acquires direct LOS again (isSeenNow = true).
+  // Now it discovers the damaged state: 20% HP, shield depleted.
+  const std::uint32_t scoutedAgain = renderer.ResolveHealthAndShield(
+    enemyId,
+    false, // isFriendly
+    true,  // isSeenNow
+    200.0f, 1000.0f, 0.0f
+  );
+  const std::uint32_t expectedHp20 = static_cast<std::uint32_t>(std::round(0.2f * 65535.0f));
+  EXPECT_EQ(scoutedAgain & 0xFFFFu, expectedHp20);
+  EXPECT_EQ((scoutedAgain >> 16) & 0x7FFFu, 0u); // Shield is 0
+
+  // 4. Scout dies, enemy is back in fog. Live health recovers to 25% (regeneration).
+  const std::uint32_t backInFog = renderer.ResolveHealthAndShield(
+    enemyId,
+    false, // isFriendly
+    false, // isSeenNow
+    250.0f, 1000.0f, 0.0f
+  );
+  // Freezes at 20% (last seen state), ignoring unseen regeneration.
+  EXPECT_EQ(backInFog & 0xFFFFu, expectedHp20);
+  EXPECT_EQ((backInFog >> 16) & 0x7FFFu, 0u);
+}
+
+TEST(StrategicIconInstancePackingTest, EnemyUnscoutedInFogReturnsDisabledOutline)
+{
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  renderer.ClearEnemyRecon();
+
+  const std::uint32_t unscoutedEnemyId = 3003u;
+
+  // Unscouted enemy (only seen on radar, never in optical LOS)
+  const std::uint32_t unscouted = renderer.ResolveHealthAndShield(
+    unscoutedEnemyId,
+    false, // isFriendly
+    false, // isSeenNow = false
+    500.0f, 1000.0f, 1.0f
+  );
+
+  // Outline MUST be disabled
+  EXPECT_NE(unscouted & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+}
+
+TEST(StrategicIconInstancePackingTest, RemoveAndClearEnemyReconResetsCache)
+{
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  renderer.ClearEnemyRecon();
+
+  const std::uint32_t enemyA = 4001u;
+  const std::uint32_t enemyB = 4002u;
+
+  // Scout both
+  (void)renderer.ResolveHealthAndShield(enemyA, false, true, 500.0f, 1000.0f, 0.0f);
+  (void)renderer.ResolveHealthAndShield(enemyB, false, true, 800.0f, 1000.0f, 0.0f);
+
+  // Remove enemyA (e.g. dead/orphaned)
+  renderer.RemoveEnemyRecon(enemyA);
+
+  // enemyA in fog now behaves as unscouted (outline disabled)
+  const std::uint32_t removedA = renderer.ResolveHealthAndShield(enemyA, false, false, 500.0f, 1000.0f, 0.0f);
+  EXPECT_NE(removedA & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+
+  // enemyB in fog is still cached
+  const std::uint32_t keptB = renderer.ResolveHealthAndShield(enemyB, false, false, 500.0f, 1000.0f, 0.0f);
+  EXPECT_EQ(keptB & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+  EXPECT_EQ(keptB & 0xFFFFu, static_cast<std::uint32_t>(std::round(0.8f * 65535.0f)));
+
+  // Clear all
+  renderer.ClearEnemyRecon();
+  const std::uint32_t clearedB = renderer.ResolveHealthAndShield(enemyB, false, false, 500.0f, 1000.0f, 0.0f);
+  EXPECT_NE(clearedB & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+}
+
 } // namespace moho

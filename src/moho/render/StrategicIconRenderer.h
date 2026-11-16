@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -150,6 +151,44 @@ namespace moho
      */
     [[nodiscard]] bool ReadBackClassified(std::vector<StrategicIconInstance>& out);
 
+    struct EnemyReconData
+    {
+      float mHealth = 0.0f;
+      float mMaxHealth = 0.0f;
+      float mShieldRatio = 0.0f;
+    };
+
+    /**
+     * Resolves and packs health and shield state for an entity's strategic icon outline,
+     * maintaining Fog-of-War recon memory for enemy units.
+     *
+     * Rules:
+     * 1. Friendly/allied entities: always returns live health and shield state (isFriendly = true).
+     * 2. Non-friendly entities seen in direct optical LOS (isSeenNow = true):
+     *    - Updates the cached enemy recon record for entityId.
+     *    - Returns live health and shield state (isFriendly = false).
+     * 3. Non-friendly entities NOT seen in direct optical LOS (isSeenNow = false):
+     *    - If previously scouted (exists in enemy recon cache):
+     *      returns the frozen cached health and shield state (isFriendly = false).
+     *      Artillery or blind fire into fog will NOT update this, preventing intel leaks!
+     *    - If never scouted (radar blip only / not in cache):
+     *      returns 0x0000FFFFu | kOutlineDisabledFlag (outline disabled).
+     */
+    [[nodiscard]] std::uint32_t ResolveHealthAndShield(
+      std::uint32_t entityId,
+      bool isFriendly,
+      bool isSeenNow,
+      float liveHealth,
+      float liveMaxHealth,
+      float liveShieldRatio
+    );
+
+    /** Clears all cached enemy recon health/shield states (e.g. on session start/exit or focus army change). */
+    void ClearEnemyRecon();
+
+    /** Removes a specific entity from enemy recon cache (e.g. on entity orphan/deletion). */
+    void RemoveEnemyRecon(std::uint32_t entityId);
+
   private:
     struct Slot
     {
@@ -157,6 +196,12 @@ namespace moho
       float mUv[4] = {};                            // origin and extent in the atlas
       float mHalfSize[2] = {};
       float mUnused[2] = {};
+    };
+
+    struct EnemyReconState
+    {
+      std::mutex mMutex;
+      std::unordered_map<std::uint32_t, EnemyReconData> mMap;
     };
 
     /** The GPU copy of one view's records, kept between frames. */
@@ -205,5 +250,7 @@ namespace moho
     std::shared_ptr<gpg::gal::GpuBuffer> mOutput; // the records in draw order
     std::shared_ptr<gpg::gal::GpuBuffer> mDrawArgs;
     std::uint32_t mLastClassifiedSources = 0U;
+
+    std::unique_ptr<EnemyReconState> mEnemyReconState = std::make_unique<EnemyReconState>();
   };
 } // namespace moho
