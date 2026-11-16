@@ -252,7 +252,7 @@ namespace moho
     config.mPulse = (ui_StrategicIconHpOutlinePulse != 0);
 
     const int palette = ui_StrategicIconHpOutlinePalette;
-    if (palette > 0 && palette <= 3) {
+    if (palette > 0 && palette <= 4) {
       switch (palette) {
         case 1: // Neon
           config.mColorGood = 0xFF00FF66u;
@@ -271,6 +271,12 @@ namespace moho
           config.mColorMed  = 0xFFEC4899u;
           config.mColorBad  = 0xFFEF4444u;
           config.mColorShield = 0xFF00C8FFu;
+          break;
+        case 4: // Monochrome / Black & White
+          config.mColorGood = 0xFFFFFFFFu;
+          config.mColorMed  = 0xFF9E9E9Eu;
+          config.mColorBad  = 0xFF505050u;
+          config.mColorShield = 0xFFD4D4D8u;
           break;
         case 0: // Classic / Default
         default:

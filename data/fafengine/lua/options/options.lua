@@ -970,6 +970,7 @@ do
                         { text = "<LOC options_palette_neon>Neon", key = 1 },
                         { text = "<LOC options_palette_colorblind>Colorblind (Deuteranopia)", key = 2 },
                         { text = "<LOC options_palette_tritanopia>Tritanopia", key = 3 },
+                        { text = "<LOC options_palette_monochrome>Monochrome (Black & White)", key = 4 },
                     },
                 },
             })

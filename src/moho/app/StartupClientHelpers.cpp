@@ -1413,13 +1413,15 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
         paletteIndex = 2;
       } else if (_stricmp(str, "tritanopia") == 0) {
         paletteIndex = 3;
+      } else if (_stricmp(str, "monochrome") == 0 || _stricmp(str, "bw") == 0 || _stricmp(str, "blackwhite") == 0 || _stricmp(str, "grayscale") == 0) {
+        paletteIndex = 4;
       } else if (_stricmp(str, "classic") == 0 || _stricmp(str, "default") == 0) {
         paletteIndex = 0;
       }
     }
   }
 
-  if (paletteIndex >= 0 && paletteIndex <= 3) {
+  if (paletteIndex >= 0 && paletteIndex <= 4) {
     ui_StrategicIconHpOutlinePalette = paletteIndex;
     switch (paletteIndex) {
       case 1: // Neon
@@ -1439,6 +1441,12 @@ int moho::cfunc_SetStrategicIconOutlineConfigL(
         config.mColorMed  = 0xFFEC4899u;
         config.mColorBad  = 0xFFEF4444u;
         config.mColorShield = 0xFF00C8FFu;
+        break;
+      case 4: // Monochrome / Black & White
+        config.mColorGood = 0xFFFFFFFFu;
+        config.mColorMed  = 0xFF9E9E9Eu;
+        config.mColorBad  = 0xFF505050u;
+        config.mColorShield = 0xFFD4D4D8u;
         break;
       case 0: // Classic / Default
       default:

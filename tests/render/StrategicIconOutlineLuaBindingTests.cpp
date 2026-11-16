@@ -115,6 +115,22 @@ TEST_F(StrategicIconOutlineLuaBindingTest, PalettePresets)
   config = moho::GetStrategicIconOutlineConfig();
   EXPECT_EQ(config.mColorGood, 0xFF3B82F6u);
   EXPECT_EQ(config.mColorBad, 0xFFF43F5Eu);
+
+  // Test string palette "monochrome" (Black & White = 4)
+  const char* script3 = R"(
+    SetStrategicIconOutlineConfig({
+      palette = "monochrome"
+    })
+    local cfg = GetStrategicIconOutlineConfig()
+    assert(cfg.palette == 4, "palette mismatch")
+  )";
+  ExecuteLua(script3);
+  EXPECT_EQ(moho::ui_StrategicIconHpOutlinePalette, 4);
+  config = moho::GetStrategicIconOutlineConfig();
+  EXPECT_EQ(config.mColorGood, 0xFFFFFFFFu);
+  EXPECT_EQ(config.mColorMed, 0xFF9E9E9Eu);
+  EXPECT_EQ(config.mColorBad, 0xFF505050u);
+  EXPECT_EQ(config.mColorShield, 0xFFD4D4D8u);
 }
 
 TEST_F(StrategicIconOutlineLuaBindingTest, HexStringColors)

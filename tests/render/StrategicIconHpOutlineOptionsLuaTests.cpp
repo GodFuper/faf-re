@@ -271,10 +271,10 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllSixOutlineOptionsPresentAndValid
     assert(type(palette.title) == 'string' and string.len(palette.title) > 0, "palette title missing")
     assert(type(palette.tip) == 'string' and string.len(palette.tip) > 0, "palette tip missing")
     assert(palette.custom ~= nil and palette.custom.states ~= nil, "palette states table missing")
-    assert(table.getn(palette.custom.states) == 4, "palette must have 4 states")
+    assert(table.getn(palette.custom.states) == 5, "palette must have 5 states")
     local paletteKeys = {}
     for _, s in ipairs(palette.custom.states) do paletteKeys[s.key] = true end
-    assert(paletteKeys[0] and paletteKeys[1] and paletteKeys[2] and paletteKeys[3], "palette state keys mismatch")
+    assert(paletteKeys[0] and paletteKeys[1] and paletteKeys[2] and paletteKeys[3] and paletteKeys[4], "palette state keys mismatch")
     assert(type(palette.set) == 'function', "palette set must be a function")
   )lua";
 

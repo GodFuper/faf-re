@@ -77,6 +77,15 @@ TEST(StrategicIconHpOutlineConfigTest, DefaultsAndModeTransitions)
   ui_StrategicIconHpOutlineSmartCutoff = 0.40f;
   EXPECT_FLOAT_EQ(GetStrategicIconOutlineConfig().mSmartCutoff, 0.40f);
 
+  // Test Monochrome / Black & White palette (4)
+  ui_StrategicIconHpOutlinePalette = 4;
+  const auto monoConfig = GetStrategicIconOutlineConfig();
+  EXPECT_EQ(monoConfig.mColorGood, 0xFFFFFFFFu);
+  EXPECT_EQ(monoConfig.mColorMed, 0xFF9E9E9Eu);
+  EXPECT_EQ(monoConfig.mColorBad, 0xFF505050u);
+  EXPECT_EQ(monoConfig.mColorShield, 0xFFD4D4D8u);
+  ui_StrategicIconHpOutlinePalette = 0;
+
   // Test invalid out-of-bounds ConVar mode falls back safely to None (e.g. 3, 99)
   ui_StrategicIconHpOutlineMode = 3;
   EXPECT_EQ(GetStrategicIconOutlineConfig().mMode, EStrategicIconOutlineMode::None);
