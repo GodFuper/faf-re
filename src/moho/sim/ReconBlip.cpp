@@ -1040,8 +1040,9 @@ void ReconBlip::Refresh()
   // (which the UI reads back as "attached and hidden"), and +0x208/+0x209 are
   // `mAttributes.mReclaimable` / `mAttributes.mCapturable`.
   mUnitVarDat.mIsBusy = sourceUnit->mAttachInfo.HasAttachTarget();
-  mUnitVarDat.mShieldRatio = sourceUnit->mUnitVarDat.mShieldRatio;
-  mUnitVarDat.mShieldActive = sourceUnit->mUnitVarDat.mShieldActive;
+  const bool shieldActive = sourceUnit->mUnitVarDat.mShieldActive;
+  mUnitVarDat.mShieldRatio = shieldActive ? sourceUnit->mUnitVarDat.mShieldRatio : 0.0f;
+  mUnitVarDat.mShieldActive = shieldActive;
 
   const UnitAttributes& sourceAttributes = sourceUnit->GetAttributes();
   mUnitVarDat.mAttributes.mReclaimable = sourceAttributes.mReclaimable;
@@ -1194,8 +1195,9 @@ void ReconBlip::SyncInterface(
   SSTIUnitVariableData& varData = mUnitVarDat;
   const bool creatorAlive = creator != nullptr;
   if (creatorAlive && (reconInfo.mReconFlags & static_cast<std::uint32_t>(RECON_LOSNow)) != 0u) {
-    varData.mShieldRatio = creator->mUnitVarDat.mShieldRatio;
-    varData.mShieldActive = creator->mUnitVarDat.mShieldActive;
+    const bool shieldActive = creator->mUnitVarDat.mShieldActive;
+    varData.mShieldRatio = shieldActive ? creator->mUnitVarDat.mShieldRatio : 0.0f;
+    varData.mShieldActive = shieldActive;
   }
   const std::int32_t creatorStunTicks =
     creatorAlive ? static_cast<std::int32_t>(creator->mUnitVarDat.mStunTicks != 0) : 0;

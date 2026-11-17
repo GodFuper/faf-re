@@ -1643,7 +1643,8 @@ namespace moho
       // binary dispatches at 0x0085D091, matching the caller's own test.
       if (const UserUnit* const unit = icon.mUnit->IsUserUnit(); unit != nullptr) {
         const float fuelRatio = unit->mUnitVarDat.mFuelRatio;
-        const float shieldRatio = unit->mUnitVarDat.mShieldRatio;
+        const float shieldRatio =
+          (icon.mIsFriendly || unit->mUnitVarDat.mShieldActive) ? unit->mUnitVarDat.mShieldRatio : 0.0f;
         const float workProgress = unit->mUnitVarDat.mWorkProgress;
         // -1 is the "this unit has no fuel lane" sentinel, distinct from an
         // empty tank at 0 (0x0085D0D3 / 0x0085D180).

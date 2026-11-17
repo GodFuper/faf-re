@@ -1239,8 +1239,9 @@ void CAiReconDBImpl::RefreshBlip(
     perArmy->mHealth = sourceUnit->mVarDat.mHealth;
     perArmy->mMaxHealth = sourceUnit->mVarDat.mMaxHealth;
     perArmy->mFractionComplete = sourceUnit->mVarDat.mFractionComplete;
-    blip->mUnitVarDat.mShieldRatio = sourceUnit->mUnitVarDat.mShieldRatio;
-    blip->mUnitVarDat.mShieldActive = sourceUnit->mUnitVarDat.mShieldActive;
+    const bool shieldActive = sourceUnit->mUnitVarDat.mShieldActive;
+    blip->mUnitVarDat.mShieldRatio = shieldActive ? sourceUnit->mUnitVarDat.mShieldRatio : 0.0f;
+    blip->mUnitVarDat.mShieldActive = shieldActive;
   }
 
   if ((perArmy->mReconFlags & static_cast<std::uint32_t>(RECON_AnySense)) != 0u) {

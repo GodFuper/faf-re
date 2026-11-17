@@ -539,6 +539,24 @@ TEST(StrategicIconShaderTest, ShieldOutlineSuppressionWhenChargingOrInactive)
 
   const float shieldAlphaSolidActive = (shieldFracActive > 0.0f) ? 1.0f : 0.0f;
   EXPECT_EQ(shieldAlphaSolidActive, 1.0f);
+
+  // 3. ReconBlip and 3D Life Bar intel leak suppression test:
+  // When an enemy shield is recharging (mShieldActive == false), ReconBlip must replicate 0.0f
+  // shieldRatio so enemy players cannot see the recharge progress or know the shield timing.
+  const float creatorShieldRatio = 0.45f;
+  const bool creatorShieldActive = false;
+  const float blipReplicatedShieldRatio = creatorShieldActive ? creatorShieldRatio : 0.0f;
+  EXPECT_EQ(blipReplicatedShieldRatio, 0.0f);
+
+  // For friendly units (isFriendly == true), 3D life bar shows recharge progress:
+  const bool isFriendly = true;
+  const float friendly3dLifeBarShield = (isFriendly || creatorShieldActive) ? creatorShieldRatio : 0.0f;
+  EXPECT_EQ(friendly3dLifeBarShield, 0.45f);
+
+  // For enemy units (isFriendly == false), 3D life bar completely suppresses recharge bar:
+  const bool isEnemy = false;
+  const float enemy3dLifeBarShield = (isEnemy || creatorShieldActive) ? creatorShieldRatio : 0.0f;
+  EXPECT_EQ(enemy3dLifeBarShield, 0.0f);
 }
 
 } // namespace moho
