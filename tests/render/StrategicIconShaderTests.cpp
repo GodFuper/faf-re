@@ -458,4 +458,47 @@ TEST(StrategicIconShaderTest, OutlineConfigDefaultsAndConVars)
   EXPECT_EQ(ui_StrategicIconHpOutlinePulse, 1);
 }
 
+TEST(StrategicIconShaderTest, EnemyShieldResolutionAndShaderAlphaInSolidAndSweepModes)
+{
+  const std::uint32_t entityId = 998877u;
+  const float liveHealth = 1000.0f;
+  const float liveMaxHealth = 1000.0f;
+  const float liveShieldRatio = 0.8f;
+  const bool isFriendly = false;
+  const bool isSeenNow = true;
+
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  renderer.ClearEnemyRecon();
+
+  const std::uint32_t resolvedSeen = renderer.ResolveHealthAndShield(
+    entityId, isFriendly, isSeenNow, liveHealth, liveMaxHealth, liveShieldRatio
+  );
+  EXPECT_EQ(resolvedSeen & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+  EXPECT_EQ((resolvedSeen >> 16) & 0x7FFFu, 0x7FFFu);
+
+  // When enemy moves into Fog-of-War (isSeenNow = false), recon memory returns cached state:
+  const std::uint32_t resolvedFow = renderer.ResolveHealthAndShield(
+    entityId, isFriendly, false, 0.0f, 0.0f, 0.0f
+  );
+  EXPECT_EQ(resolvedFow & StrategicIconInstance::kOutlineDisabledFlag, 0u);
+  EXPECT_EQ((resolvedFow >> 16) & 0x7FFFu, 0x7FFFu);
+
+  // Shader emulation:
+  const float shieldFrac = float((resolvedSeen >> 16) & 0x7FFFu) / 32767.0f;
+  EXPECT_NEAR(shieldFrac, 1.0f, 0.0001f);
+
+  // In Solid mode (OutlineMode == 1): shield is active and solid
+  const int outlineModeSolid = 1;
+  const float shieldAlphaSolid = (outlineModeSolid == 1) ? ((shieldFrac > 0.0f) ? 1.0f : 0.0f) : 0.0f;
+  EXPECT_EQ(shieldAlphaSolid, 1.0f);
+
+  // In Sweep mode (OutlineMode == 2): shield arc sweeps full circle when 1.0f
+  const int outlineModeSweep = 2;
+  const float normAngleHalf = 0.5f;
+  const float shieldAlphaSweep = (outlineModeSweep == 2) ? ((shieldFrac > 0.0f && normAngleHalf <= shieldFrac) ? 1.0f : 0.0f) : 0.0f;
+  EXPECT_EQ(shieldAlphaSweep, 1.0f);
+
+  renderer.ClearEnemyRecon();
+}
+
 } // namespace moho

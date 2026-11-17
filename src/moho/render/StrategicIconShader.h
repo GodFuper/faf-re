@@ -313,7 +313,14 @@ float4 StrategicIconPS(IconVertex input) : SV_Target
     float shieldAlpha = 0.0;
     if (hasShieldMeter)
     {
-        shieldAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
+        if (OutlineMode == 1)
+        {
+            shieldAlpha = (shieldFrac > 0.0) ? 1.0 : 0.0;
+        }
+        else if (OutlineMode == 2)
+        {
+            shieldAlpha = (shieldFrac > 0.0 && normAngle <= shieldFrac) ? 1.0 : 0.0;
+        }
     }
 
     // Band 1: Guaranteed black separator
