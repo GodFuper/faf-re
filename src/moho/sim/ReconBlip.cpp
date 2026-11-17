@@ -1041,6 +1041,7 @@ void ReconBlip::Refresh()
   // `mAttributes.mReclaimable` / `mAttributes.mCapturable`.
   mUnitVarDat.mIsBusy = sourceUnit->mAttachInfo.HasAttachTarget();
   mUnitVarDat.mShieldRatio = sourceUnit->mUnitVarDat.mShieldRatio;
+  mUnitVarDat.mShieldActive = sourceUnit->mUnitVarDat.mShieldActive;
 
   const UnitAttributes& sourceAttributes = sourceUnit->GetAttributes();
   mUnitVarDat.mAttributes.mReclaimable = sourceAttributes.mReclaimable;
@@ -1194,6 +1195,7 @@ void ReconBlip::SyncInterface(
   const bool creatorAlive = creator != nullptr;
   if (creatorAlive && (reconInfo.mReconFlags & static_cast<std::uint32_t>(RECON_LOSNow)) != 0u) {
     varData.mShieldRatio = creator->mUnitVarDat.mShieldRatio;
+    varData.mShieldActive = creator->mUnitVarDat.mShieldActive;
   }
   const std::int32_t creatorStunTicks =
     creatorAlive ? static_cast<std::int32_t>(creator->mUnitVarDat.mStunTicks != 0) : 0;

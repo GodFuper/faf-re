@@ -540,7 +540,7 @@ namespace moho
     bool mIsPaused;                            // +0x018
     bool mIsValidTarget;                       // +0x019
     bool mRepeatQueue;                         // +0x01A
-    std::uint8_t mPad01B;                      // +0x01B
+    bool mShieldActive;                        // +0x01B
     std::int32_t mJobType;                     // +0x01C (EJobType storage lane)
     std::int32_t mFireState;                   // +0x020 (EFireState storage lane)
     float mWorkProgress;                       // +0x024
@@ -584,6 +584,7 @@ namespace moho
     std::uint8_t mPad222_227[0x06];                   // +0x222
   };
   static_assert(sizeof(SSTIUnitVariableData) == 0x228, "SSTIUnitVariableData size must be 0x228");
+  static_assert(offsetof(SSTIUnitVariableData, mShieldActive) == 0x01B, "SSTIUnitVariableData::mShieldActive offset");
   static_assert(offsetof(SSTIUnitVariableData, mCustomName) == 0x044, "SSTIUnitVariableData::mCustomName offset");
   static_assert(offsetof(SSTIUnitVariableData, mCommands) == 0x098, "SSTIUnitVariableData::mCommands offset");
   static_assert(offsetof(SSTIUnitVariableData, mBuildQueue) == 0x0C8, "SSTIUnitVariableData::mBuildQueue offset");

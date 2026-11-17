@@ -68,6 +68,12 @@ void Unit::SyncInterface(
     varData.mDidRefresh = true;
   }
 
+  if (varData.mShieldRatio > 0.0f) {
+    varData.mShieldActive = this->RunScriptBool("ShieldIsOn");
+  } else {
+    varData.mShieldActive = false;
+  }
+
   // sim_ParallelSync finishes the copy on workers after the walk; otherwise the serial queue.
   SUnitVariableUpdateEntry* entry = QueueUnitVariableUpdateDeferred(syncData, id_, varData);
   if (entry == nullptr) {

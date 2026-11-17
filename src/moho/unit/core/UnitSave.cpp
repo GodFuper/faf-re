@@ -288,7 +288,7 @@ SSTIUnitVariableData::SSTIUnitVariableData()
   , mIsPaused(false)
   , mIsValidTarget(true)
   , mRepeatQueue(false)
-  , mPad01B(0)
+  , mShieldActive(false)
   , mJobType(0)
   , mFireState(0)
   , mWorkProgress(0.0f)
@@ -402,7 +402,7 @@ SSTIUnitVariableData& SSTIUnitVariableData::AssignFrom(
   mIsPaused = other.mIsPaused;
   mIsValidTarget = other.mIsValidTarget;
   mRepeatQueue = other.mRepeatQueue;
-  mPad01B = other.mPad01B;
+  mShieldActive = other.mShieldActive;
   mJobType = other.mJobType;
   mFireState = other.mFireState;
   mWorkProgress = other.mWorkProgress;
@@ -468,7 +468,7 @@ void SSTIUnitVariableData::AssignInlineMembersFrom(
   mIsPaused = other.mIsPaused;
   mIsValidTarget = other.mIsValidTarget;
   mRepeatQueue = other.mRepeatQueue;
-  mPad01B = other.mPad01B;
+  mShieldActive = other.mShieldActive;
   mJobType = other.mJobType;
   mFireState = other.mFireState;
   mWorkProgress = other.mWorkProgress;

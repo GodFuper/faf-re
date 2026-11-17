@@ -501,4 +501,44 @@ TEST(StrategicIconShaderTest, EnemyShieldResolutionAndShaderAlphaInSolidAndSweep
   renderer.ClearEnemyRecon();
 }
 
+TEST(StrategicIconShaderTest, ShieldOutlineSuppressionWhenChargingOrInactive)
+{
+  // 1. Verify SSTIUnitVariableData layout invariants
+  static_assert(sizeof(SSTIUnitVariableData) == 0x228, "SSTIUnitVariableData size must be 0x228");
+  static_assert(offsetof(SSTIUnitVariableData, mShieldActive) == 0x01B, "SSTIUnitVariableData::mShieldActive offset");
+
+  SSTIUnitVariableData varData{};
+  EXPECT_FALSE(varData.mShieldActive);
+  varData.mShieldRatio = 0.65f; // Charging up in RechargeState
+
+  // While mShieldActive is false, effective ratio for strategic icon outline is 0.0f
+  const float effectiveShieldRatioInactive = varData.mShieldActive ? varData.mShieldRatio : 0.0f;
+  EXPECT_EQ(effectiveShieldRatioInactive, 0.0f);
+
+  StrategicIconRenderer& renderer = StrategicIconRenderer::Get();
+  const std::uint32_t resolvedInactive = renderer.ResolveHealthAndShield(
+    12345u, true, true, 500.0f, 1000.0f, effectiveShieldRatioInactive
+  );
+  const float shieldFracInactive = float((resolvedInactive >> 16) & 0x7FFFu) / 32767.0f;
+  EXPECT_EQ(shieldFracInactive, 0.0f);
+
+  // Shader emulation for Solid and Sweep modes: shield outline must be 0 alpha
+  const float shieldAlphaSolidInactive = (shieldFracInactive > 0.0f) ? 1.0f : 0.0f;
+  EXPECT_EQ(shieldAlphaSolidInactive, 0.0f);
+
+  // 2. When shield finishes charging and transitions to OnState, mShieldActive becomes true
+  varData.mShieldActive = true;
+  const float effectiveShieldRatioActive = varData.mShieldActive ? varData.mShieldRatio : 0.0f;
+  EXPECT_EQ(effectiveShieldRatioActive, 0.65f);
+
+  const std::uint32_t resolvedActive = renderer.ResolveHealthAndShield(
+    12345u, true, true, 500.0f, 1000.0f, effectiveShieldRatioActive
+  );
+  const float shieldFracActive = float((resolvedActive >> 16) & 0x7FFFu) / 32767.0f;
+  EXPECT_GT(shieldFracActive, 0.0f);
+
+  const float shieldAlphaSolidActive = (shieldFracActive > 0.0f) ? 1.0f : 0.0f;
+  EXPECT_EQ(shieldAlphaSolidActive, 1.0f);
+}
+
 } // namespace moho

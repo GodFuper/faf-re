@@ -2209,7 +2209,7 @@ namespace moho
         UserEntity* const entity = candidate.mData.mUnit;
         const UserUnit* const unit = entity->IsUserUnit();
         float shieldRatio = 0.0f;
-        if (unit != nullptr) {
+        if (unit != nullptr && unit->mUnitVarDat.mShieldActive) {
           shieldRatio = unit->mUnitVarDat.mShieldRatio;
         }
         constexpr std::uint32_t kIntelHealthValidMask = 0x08u;
@@ -2918,7 +2918,7 @@ namespace moho
         record.mLastFocusDamageTick = entity->mLastFocusDamageGameTick;
 
         float shieldRatio = 0.0f;
-        if (asUnit != nullptr) {
+        if (asUnit != nullptr && asUnit->mUnitVarDat.mShieldActive) {
           shieldRatio = asUnit->mUnitVarDat.mShieldRatio;
         }
         constexpr std::uint32_t kIntelHealthValidMask = 0x08u;
