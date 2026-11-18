@@ -58,6 +58,15 @@ namespace moho
         }
         link->Send(data, size);
       }
+
+      // Game channel (net_GameChannel): the link says whether both ends offered it.
+      [[nodiscard]] bool OffersGameChannel(
+        faf::remote::net::ChannelKeys& keys,
+        bool& keyed
+      ) const override
+      {
+        return link->GameChannelOffer(keys, keyed);
+      }
     };
 
     struct EnginePeer
@@ -87,7 +96,7 @@ namespace moho
       ) override
       {
         const std::string_view text(message.c_str(), message.size());
-        if (text.rfind("NETLINK:", 0) != 0 && text.rfind("NET:", 0) != 0) {
+        if (!text.starts_with("NETLINK:") && !text.starts_with("NET:")) {
           return;
         }
         std::lock_guard lock(mMutex);
@@ -131,10 +140,9 @@ namespace moho
         const std::string& json
       )
       {
-        std::string error;
-        const std::optional<nl::JsonValue> config = nl::ParseJson(json, &error);
+        const std::expected<nl::JsonValue, std::string> config = nl::ParseJson(json);
         if (!config || !config->IsObject()) {
-          gpg::Logf("NETLINK: bad NetlinkConfig (%s)", error.c_str());
+          gpg::Logf("NETLINK: bad NetlinkConfig (%s)", config ? "" : config.error().c_str());
           return;
         }
         std::lock_guard lock(mMutex);
@@ -226,6 +234,8 @@ namespace moho
           info.rttMs = stats.lastRttMs >= 0 ? stats.lastRttMs : stats.onLane ? stats.laneRttMs : -1;
           info.onLane = stats.onLane;
           info.laneEncrypted = stats.laneEncrypted;
+          info.gameChannel = stats.gameChannel;
+          info.gameChannelEncrypted = stats.gameChannelEncrypted;
           info.attempts = stats.attempts;
           info.choice = stats.choice;
           {
@@ -275,10 +285,9 @@ namespace moho
         const std::string& json
       )
       {
-        std::string error;
-        const std::optional<nl::JsonValue> parsed = nl::ParseJson(json, &error);
+        const std::expected<nl::JsonValue, std::string> parsed = nl::ParseJson(json);
         if (!parsed) {
-          gpg::Logf("NETLINK: bad IceServers (%s)", error.c_str());
+          gpg::Logf("NETLINK: bad IceServers (%s)", parsed.error().c_str());
           return;
         }
         const nl::JsonValue* list = &*parsed;
@@ -331,6 +340,8 @@ namespace moho
           options.redundancy = mRedundancy;
           options.encrypt = mEncrypt;
           options.testDropPercent = mTestDropPercent;
+          // Game channel: only where this game ends the link itself (native mode), read per link.
+          options.gameChannel = mNative && net_GameChannel != 0;
         }
         options.remoteId = id;
         options.offerer = offerer;
@@ -412,10 +423,9 @@ namespace moho
           link->OnSignalText(json); // issue #239
           return;
         }
-        std::string error;
-        const std::optional<nl::CandidatesMessage> m = nl::CandidatesMessageFromJson(json, &error);
+        const std::expected<nl::CandidatesMessage, std::string> m = nl::CandidatesMessageFromJson(json);
         if (!m) {
-          gpg::Logf("NETLINK: bad ICE message from peer %lld (%s)", static_cast<long long>(id), error.c_str());
+          gpg::Logf("NETLINK: bad ICE message from peer %lld (%s)", static_cast<long long>(id), m.error().c_str());
           return;
         }
         link->OnSignal(*m);
@@ -660,7 +670,7 @@ namespace moho
   {
     namespace nl = faf::netlink;
     const auto command = name.view();
-    if (command.rfind("Netlink", 0) != 0) {
+    if (!command.starts_with("Netlink")) {
       return false;
     }
     if (net_InEngineLinks == 0) {
@@ -817,7 +827,7 @@ namespace moho
       Links().RemovePeer(IntArg(args[0]));
       return comingBack;
     }
-    if (command.rfind("Netlink", 0) == 0) {
+    if (command.starts_with("Netlink")) {
       gpg::Logf("NETLINK: %s ignored in native mode", name.c_str());
       return true;
     }

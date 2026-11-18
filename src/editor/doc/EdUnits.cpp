@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -343,7 +344,7 @@ namespace faf::editor
     {
       int highest = 0;
       for (const SaveUnit& unit : group.units) {
-        if (unit.name.rfind("UNIT_", 0) == 0) {
+        if (unit.name.starts_with("UNIT_")) {
           highest = std::max(highest, std::atoi(unit.name.c_str() + 5));
         }
       }
@@ -354,20 +355,18 @@ namespace faf::editor
     }
   } // namespace
 
-  bool ParseUnitGroup(
+  std::expected<void, std::string> ParseUnitGroup(
     const std::string& text,
-    UnitGroup& group,
-    std::string& error
+    UnitGroup& group
   )
   {
     Reader reader{text, 0, {}};
     group = UnitGroup{};
     if (!ReadGroup(reader, group)) {
-      error = reader.error;
-      return false;
+      return std::unexpected(reader.error);
     }
-    group.newline = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
-    return true;
+    group.newline = text.contains("\r\n") ? "\r\n" : "\n";
+    return {};
   }
 
   std::string FormatUnitGroup(
@@ -644,10 +643,10 @@ namespace faf::editor
   {
     std::vector<const SaveUnit*> units;
     CollectUnits(group, units);
-    std::vector<std::string> names;
-    for (const SaveUnit* const unit : units) {
-      names.push_back(unit->name);
-    }
+    auto names = units | std::views::transform([&](const SaveUnit* const unit) {
+      return unit->name;
+    }) |
+      std::ranges::to<std::vector<std::string>>();
     return names;
   }
 } // namespace faf::editor

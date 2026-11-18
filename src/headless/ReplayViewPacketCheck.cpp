@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <print>
 #include <vector>
+#include <ranges>
 
 #include "moho/entity/Entity.h"
 #include "moho/resource/blueprints/RMeshBlueprint.h"
@@ -213,10 +215,10 @@ namespace faf::headless
       const fa::vector<moho::EntId>& ids
     )
     {
-      std::vector<std::uint32_t> sorted;
-      for (const moho::EntId id : ids) {
-        sorted.push_back(static_cast<std::uint32_t>(id));
-      }
+      auto sorted = ids | std::views::transform([&](const moho::EntId id) {
+        return static_cast<std::uint32_t>(id);
+      }) |
+        std::ranges::to<std::vector<std::uint32_t>>();
       std::sort(sorted.begin(), sorted.end());
       CDigest digest;
       for (const std::uint32_t id : sorted) {
@@ -306,9 +308,9 @@ namespace faf::headless
       if (mEntries != nullptr && sampled) {
         CDigest own;
         addRecord(own);
-        std::fprintf(
+        std::println(
           mEntries,
-          "%u %c %08x %016llx\n",
+          "{} {} {:08x} {:016x}",
           beat,
           lane,
           static_cast<std::uint32_t>(id),
@@ -360,10 +362,10 @@ namespace faf::headless
     }
     // In id order, as their lane digests take them (`IdsDigest`).
     const auto idEntries = [&](const char lane, const fa::vector<moho::EntId>& ids) {
-      std::vector<std::uint32_t> sorted;
-      for (const moho::EntId id : ids) {
-        sorted.push_back(static_cast<std::uint32_t>(id));
-      }
+      auto sorted = ids | std::views::transform([&](const moho::EntId id) {
+        return static_cast<std::uint32_t>(id);
+      }) |
+        std::ranges::to<std::vector<std::uint32_t>>();
       std::sort(sorted.begin(), sorted.end());
       for (const std::uint32_t id : sorted) {
         entry(lane, static_cast<moho::EntId>(id), [id](CDigest& digest) {
@@ -374,9 +376,9 @@ namespace faf::headless
     idEntries('d', packet.mDeleteIds);
     idEntries('x', packet.mEraseIds);
 
-    std::fprintf(
+    std::println(
       mFile,
-      "%u %zu %zu %zu %zu %zu %zu %016llx %016llx %016llx %016llx %016llx %016llx %016llx\n",
+      "{} {} {} {} {} {} {} {:016x} {:016x} {:016x} {:016x} {:016x} {:016x} {:016x}",
       beat,
       static_cast<std::size_t>(packet.mNewEntities.size()),
       static_cast<std::size_t>(packet.mNewUnits.size()),

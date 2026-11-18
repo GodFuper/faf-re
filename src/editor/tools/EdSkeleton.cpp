@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -175,7 +176,7 @@ namespace faf::editor
   {
     std::vector<std::pair<int, SkeletonStart>> list;
     for (const PadMarker& m : markers) {
-      if (m.name.size() > 5 && m.name.compare(0, 5, "ARMY_") == 0) {
+      if (m.name.size() > 5 && m.name.starts_with("ARMY_")) {
         const std::string digits = m.name.substr(5);
         if (!digits.empty() && std::all_of(digits.begin(), digits.end(), [](const char c) {
           return c >= '0' && c <= '9';
@@ -213,10 +214,10 @@ namespace faf::editor
     cx /= static_cast<float>(starts.size());
     cz /= static_cast<float>(starts.size());
     hub = SkeletonNode{"hub", cx, cz, true};
-    std::vector<SkeletonNode> sorted;
-    for (const SkeletonStart& s : starts) {
-      sorted.push_back({s.name, s.x, s.z, false});
-    }
+    auto sorted = starts | std::views::transform([&](const SkeletonStart& s) {
+      return SkeletonNode{s.name, s.x, s.z, false};
+    }) |
+      std::ranges::to<std::vector<SkeletonNode>>();
     std::stable_sort(sorted.begin(), sorted.end(), [&](const SkeletonNode& a, const SkeletonNode& b) {
       return std::atan2(a.z - cz, a.x - cx) < std::atan2(b.z - cz, b.x - cx);
     });

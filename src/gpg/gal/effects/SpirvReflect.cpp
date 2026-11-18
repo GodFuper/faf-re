@@ -145,7 +145,7 @@ namespace gpg::gal::effects
       }
       SpirvInterfaceVariable entry;
       entry.id = variable.id;
-      entry.builtIn = builtIns.count(variable.id) != 0U;
+      entry.builtIn = builtIns.contains(variable.id);
       const auto location = locations.find(variable.id);
       if (location == locations.end() && !entry.builtIn) {
         continue;
@@ -181,7 +181,7 @@ namespace gpg::gal::effects
       }
 
       // "TEXCOORD3" -> ("TEXCOORD", 3).
-      std::string semantic = semantics.count(variable.id) != 0U ? semantics[variable.id] : std::string();
+      std::string semantic = semantics.contains(variable.id) ? semantics[variable.id] : std::string();
       std::transform(semantic.begin(), semantic.end(), semantic.begin(), [](const unsigned char c) {
         return static_cast<char>(std::toupper(c));
       });
@@ -192,7 +192,7 @@ namespace gpg::gal::effects
       entry.semanticIndex =
         (digits < semantic.size()) ? static_cast<std::uint32_t>(std::stoul(semantic.substr(digits))) : 0U;
       entry.semantic = semantic.substr(0U, digits);
-      if (entry.semantic.rfind("SV_", 0U) == 0U) {
+      if (entry.semantic.starts_with("SV_")) {
         entry.builtIn = true;
       }
       (variable.storage == kStorageInput ? result.inputs : result.outputs).push_back(std::move(entry));
@@ -226,6 +226,86 @@ namespace gpg::gal::effects
     std::vector<std::uint8_t> patched(words.size() * 4U);
     std::memcpy(patched.data(), words.data(), patched.size());
     return patched;
+  }
+
+  std::map<std::uint32_t, std::uint32_t> LinkPixelInputLocations(
+    const SpirvInterface& vertex,
+    const SpirvInterface& pixel,
+    const std::uint32_t lastLocation
+  )
+  {
+    std::map<std::uint32_t, std::uint32_t> locations;
+    // Which of the device's locations an input has taken.
+    std::vector<bool> taken(static_cast<std::size_t>(lastLocation) + 1U, false);
+    const auto mark = [&taken](const std::uint32_t first, const std::uint32_t count) {
+      for (std::uint32_t location = first; location - first < count && location < taken.size(); ++location) {
+        taken[location] = true;
+      }
+    };
+    std::vector<const SpirvInterfaceVariable*> unwritten;
+    for (const SpirvInterfaceVariable& input : pixel.inputs) {
+      if (input.builtIn) {
+        continue;
+      }
+      std::uint32_t location = 0xFFFFFFFFU;
+      for (const SpirvInterfaceVariable& output : vertex.outputs) {
+        if (
+          !output.builtIn && output.semantic == input.semantic && input.semanticIndex >= output.semanticIndex &&
+          input.semanticIndex < output.semanticIndex + output.locations
+        ) {
+          location = output.location + (input.semanticIndex - output.semanticIndex);
+        }
+      }
+      if (location == 0xFFFFFFFFU) {
+        unwritten.push_back(&input);
+      } else {
+        locations[input.id] = location;
+        mark(location, input.locations);
+      }
+    }
+    // The others, in their order, each in the highest locations that are free for all of its own (an array or
+    // a matrix takes one per element or column).
+    for (const SpirvInterfaceVariable* const input : unwritten) {
+      const std::uint32_t size = std::max(input->locations, 1U);
+      for (std::uint32_t end = lastLocation + 1U; end >= size; --end) {
+        const auto from = taken.begin() + static_cast<std::ptrdiff_t>(end - size);
+        const auto to = taken.begin() + static_cast<std::ptrdiff_t>(end);
+        if (std::find(from, to, true) == to) {
+          locations[input->id] = end - size;
+          mark(end - size, size);
+          break;
+        }
+      }
+    }
+    return locations;
+  }
+
+  bool ReflectSpirvComputeGroupSize(
+    const std::vector<std::uint8_t>& code,
+    std::uint32_t (&size)[3]
+  )
+  {
+    constexpr std::uint16_t kOpExecutionMode = 16;
+    constexpr std::uint32_t kExecutionModeLocalSize = 17;
+    const std::vector<std::uint32_t> words = Words(code);
+    if (words.size() < 5U || words[0] != kMagic) {
+      return false;
+    }
+    for (std::size_t index = 5U; index < words.size();) {
+      const std::uint16_t opcode = static_cast<std::uint16_t>(words[index] & 0xFFFFU);
+      const std::uint16_t count = static_cast<std::uint16_t>(words[index] >> 16U);
+      if (count == 0U || index + count > words.size()) {
+        return false;
+      }
+      if (opcode == kOpExecutionMode && count >= 6U && words[index + 2U] == kExecutionModeLocalSize) {
+        size[0] = words[index + 3U];
+        size[1] = words[index + 4U];
+        size[2] = words[index + 5U];
+        return true;
+      }
+      index += count;
+    }
+    return false;
   }
 
   std::vector<std::uint8_t> StripSpirvReflection(

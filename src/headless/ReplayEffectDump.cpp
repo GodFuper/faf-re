@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cmath>
 #include <map>
+#include <print>
 #include <utility>
 
 #include "moho/effects/rendering/IEffect.h"
@@ -358,7 +359,7 @@ namespace faf::headless
     record->destroyed = true;
     record->ended = side.beat;
     if (!record->endingSeen) {
-      const bool script = client ? mViewScript.count(id) != 0u : mScriptDestroyed.count(id) != 0u;
+      const bool script = client ? mViewScript.contains(id) : mScriptDestroyed.contains(id);
       record->end = script ? EEnd::Script : EEnd::Other;
     }
     side.released.push_back(&effect);
@@ -638,22 +639,22 @@ namespace faf::headless
     if (fopen_s(&file, path.c_str(), "w") != 0 || file == nullptr) {
       return;
     }
-    std::fprintf(
+    std::println(
       file,
-      "id,op,blueprint,army,entity,bone,created,ended,end,made,incarnations,ticks,hidden,particles,trails,beams,"
-      "first_emit,last_emit,x,y,z,per_beat\n"
+      "id,op,blueprint,army,entity,bone,created,ended,end,made,incarnations,ticks,hidden,particles,trails,beams,first_"
+      "emit,last_emit,x,y,z,per_beat"
     );
     std::map<std::uint32_t, const SRecord*> ordered;
     for (const auto& [id, record] : side.records) {
       ordered.emplace(id, &record);
     }
     for (const auto& [id, record] : ordered) {
-      std::fprintf(
+      std::println(
         file,
-        "%u,%s,%s,%d,%d,%d,%u,%d,%s,%d,%u,%u,%u,%llu,%llu,%llu,%u,%u,%.2f,%.2f,%.2f,%s\n",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.2f},{:.2f},{:.2f},{}",
         id,
         moho::EffectOpName(record->op),
-        mNames[record->blueprint].c_str(),
+        mNames[record->blueprint],
         record->army,
         record->entity,
         record->bone,
@@ -672,7 +673,7 @@ namespace faf::headless
         record->position[0],
         record->position[1],
         record->position[2],
-        RunLength(record->perBeat).c_str()
+        RunLength(record->perBeat)
       );
     }
     std::fclose(file);
@@ -794,8 +795,7 @@ namespace faf::headless
       ++endPairs[static_cast<std::size_t>(lock.end)][static_cast<std::size_t>(client.end)];
       onCollisionBeamBone1 += lock.onCollisionBeam && lock.bone == 1 ? 1u : 0u;
       if (lock.hashed && client.hashed && client.incarnations == 1u && client.created == lock.created) {
-        const std::string what =
-          lock.op == moho::EEffectOp::CreateBeam && mNames[lock.blueprint].rfind("params:", 0) == 0
+        const std::string what = lock.op == moho::EEffectOp::CreateBeam && mNames[lock.blueprint].starts_with("params:")
           ? "CreateBeam from parameters"
           : moho::EffectOpName(lock.op);
         auto& entry = paramsBy[what];
@@ -880,7 +880,7 @@ namespace faf::headless
     for (const auto& [id, client] : mClient.records) {
       clientEmitted += Emitted(client);
       clientParticles += client.particles;
-      clientOnly += mLockstep.records.count(id) == 0u ? 1u : 0u;
+      clientOnly += !mLockstep.records.contains(id) ? 1u : 0u;
     }
 
     std::string out;

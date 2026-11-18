@@ -2,6 +2,7 @@
 
 #include "ResourcesVulkan.h"
 
+#include <utility>
 #include <algorithm>
 #include <cstring>
 
@@ -50,7 +51,7 @@ namespace gpg::gal
       const MohoD3DLockFlags flag
     ) noexcept
     {
-      return (flags & static_cast<std::uint32_t>(flag)) != 0U;
+      return (flags & std::to_underlying(flag)) != 0U;
     }
 
     void RetireImage(
@@ -245,8 +246,13 @@ namespace gpg::gal
   {
     if (mSwapChainIndex >= 0 && mBuffers.size() > 1U) {
       DeviceVulkan* const device = ActiveDevice();
-      const std::uint32_t index =
-        (device != nullptr) ? device->AcquiredImage(static_cast<std::uint32_t>(mSwapChainIndex)) : 0U;
+      const auto swapChain = static_cast<std::uint32_t>(mSwapChainIndex);
+      // Without an acquired image (the acquire failed, or the window has no surface) the head owns none of
+      // its swap chain's: what would draw into it draws into none (DeviceVulkan::TargetView).
+      if (device != nullptr && !device->HasAcquiredImage(swapChain)) {
+        return mNoImage;
+      }
+      const std::uint32_t index = (device != nullptr) ? device->AcquiredImage(swapChain) : 0U;
       return mBuffers[std::min<std::size_t>(index, mBuffers.size() - 1U)];
     }
     return mBuffers.front();
@@ -340,7 +346,7 @@ namespace gpg::gal
     }
     mLockOffset = offset;
     mLockSize = (size == 0U || offset + size > mByteWidth) ? (mByteWidth - offset) : size;
-    mLockFlags = static_cast<std::uint32_t>(flags);
+    mLockFlags = std::to_underlying(flags);
     mLocked = true;
     if (!HasFlag(mLockFlags, MohoD3DLockFlags::ReadOnly)) {
       const std::uint32_t end = mLockOffset + mLockSize;

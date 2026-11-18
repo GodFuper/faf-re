@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <stdexcept>
+#include <utility>
 
 #include "gpg/core/containers/FastVector.h"
 #include "gpg/core/containers/String.h"
@@ -267,7 +268,8 @@ namespace gpg
      * Endianness: bytes are emitted as-is (little-endian on x86).
      */
     template <class T>
-    std::enable_if_t<std::is_trivially_copyable_v<T> && !std::is_pointer_v<T> && !std::is_enum_v<T>, void> Write(
+      requires(std::is_trivially_copyable_v<T> && !std::is_pointer_v<T> && !std::is_enum_v<T>)
+    void Write(
       const T& value
     )
     {
@@ -280,13 +282,13 @@ namespace gpg
      * Write enum by its underlying integral type.
      */
     template <class E>
-    std::enable_if_t<std::is_enum_v<E>, void> Write(
+      requires std::is_enum_v<E>
+    void Write(
       const E value
     )
     {
-      using U = std::underlying_type_t<E>;
-      U tmp = static_cast<U>(value);
-      Write(&tmp, sizeof(U));
+      const auto tmp = std::to_underlying(value);
+      Write(&tmp, sizeof(tmp));
     }
 
     /**
@@ -295,7 +297,8 @@ namespace gpg
      * Write fixed-size C array (e.g., byte blobs).
      */
     template <class T, std::size_t N>
-    std::enable_if_t<std::is_trivially_copyable_v<T>, void> Write(
+      requires std::is_trivially_copyable_v<T>
+    void Write(
       const T (&arr)[N]
     )
     {

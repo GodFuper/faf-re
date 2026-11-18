@@ -9,7 +9,6 @@
 #include <string>
 #include <vector>
 
-#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -33,6 +32,7 @@
 #include <zstd.h>
 
 #include <memory>
+#include <ranges>
 #include "gpg/core/containers/ReadArchive.h"
 #include "gpg/core/containers/WriteArchive.h"
 #include "gpg/core/utils/SharedPtrUtils.h"
@@ -646,18 +646,17 @@ namespace moho
       if (replay_KeyframeQuietDisk) {
         arguments.emplace_back("--keyframe-quiet");
       }
+      // The preparer ends when the game does (platform::posix::ExitWithParent, which the Windows
+      // build's job object does there).
+      arguments.emplace_back("--keyframe-parent");
+      arguments.emplace_back(std::to_string(::getpid()));
       std::vector<char*> argv;
       for (std::string& argument : arguments) {
         argv.push_back(argument.data());
       }
       argv.push_back(nullptr);
-      const pid_t parent = ::getpid();
       const pid_t child = ::fork();
       if (child == 0) {
-        (void)::prctl(PR_SET_PDEATHSIG, SIGKILL);
-        if (::getppid() != parent) {
-          ::_exit(0); // the game ended before the signal was armed
-        }
         (void)::setpriority(PRIO_PROCESS, 0, 10);
         (void)::chdir(folder.c_str());
         ::execv(argv[0], argv.data());
@@ -834,7 +833,7 @@ namespace moho
     )
     {
       std::FILE* file = nullptr;
-      if (path.size() < 4u || path.compare(path.size() - 4u, 4u, ".zst") != 0) {
+      if (path.size() < 4u || !path.ends_with(".zst")) {
         return fopen_s(&file, path.c_str(), "rb") == 0 ? file : nullptr;
       }
       const auto start = Clock::now();
@@ -1042,11 +1041,7 @@ namespace moho
 
   std::vector<std::int32_t> REPLAY_KeyframeTicks()
   {
-    std::vector<std::int32_t> ticks;
-    ticks.reserve(sKeyframes.size());
-    for (const auto& keyframe : sKeyframes) {
-      ticks.push_back(keyframe.first);
-    }
+    auto ticks = sKeyframes | std::views::keys | std::ranges::to<std::vector<std::int32_t>>();
     return ticks;
   }
 

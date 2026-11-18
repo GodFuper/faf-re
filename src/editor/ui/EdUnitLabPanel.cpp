@@ -111,27 +111,25 @@ namespace faf::editor
     return rules->GetUnitBlueprint(resId) != nullptr;
   }
 
-  bool EdUnitLabPanel::Derive(
+  std::expected<void, std::string> EdUnitLabPanel::Derive(
     const std::string& id,
     const std::string& name,
-    const std::string& description,
-    std::string& error
+    const std::string& description
   )
   {
     ModProject* const p = mProject.Project();
     if (p == nullptr || mUnit.empty()) {
-      error = "no project or unit";
-      return false;
+      return std::unexpected("no project or unit");
     }
     const std::string base = ModSourceUnit(*p, mUnit);
     const ModChanges before = ModChangesOf(*p);
-    if (!AddModDerived(*p, id, base, name, description, &EdUnitLabPanel::GameHasUnit, error)) {
-      return false;
+    if (const auto added = AddModDerived(*p, id, base, name, description, &EdUnitLabPanel::GameHasUnit); !added) {
+      return std::unexpected(added.error());
     }
     (void)mProject.History().Record("derive " + id + " from " + base, before, ModChangesOf(*p), "", ImGui::GetTime());
     mProject.Touch();
     mUnit = id;
-    return true;
+    return {};
   }
 
   bool EdUnitLabPanel::SetField(
@@ -214,14 +212,14 @@ namespace faf::editor
         std::transform(lower.begin(), lower.end(), lower.begin(), [](const unsigned char c) {
           return static_cast<char>(std::tolower(c));
         });
-        if (!filter.empty() && lower.find(filter) == std::string::npos) {
+        if (!filter.empty() && !lower.contains(filter)) {
           continue;
         }
         if (++shown > 300) {
           ImGui::TextDisabled("... more: type to narrow");
           break;
         }
-        if (p->edits.count(u.id) != 0) {
+        if (p->edits.contains(u.id)) {
           text += "  (changed)";
         }
         if (ImGui::Selectable(text.c_str(), u.id == mUnit)) {
@@ -271,13 +269,15 @@ namespace faf::editor
       ImGui::Checkbox("With a script of its own", &mDeriveScript);
       EdSetItemTooltip("units/<id>/<id>_script.lua: a class built on the base unit's, written once for you to change");
       if (ImGui::Button("Derive")) {
-        if (Derive(mDeriveId, mDeriveName, mDeriveDescription, mDeriveError)) {
+        if (const auto derived = Derive(mDeriveId, mDeriveName, mDeriveDescription); derived) {
           if (mDeriveScript) {
             if (const auto made = p->derived.find(mDeriveId); made != p->derived.end()) {
               made->second.script = true;
             }
           }
           ImGui::CloseCurrentPopup();
+        } else {
+          mDeriveError = derived.error();
         }
       }
       if (!mDeriveError.empty()) {
@@ -286,8 +286,8 @@ namespace faf::editor
       ImGui::EndPopup();
     }
     ImGui::SameLine();
-    ImGui::BeginDisabled(mUnit.empty() || (p->edits.count(mUnit) == 0 && p->derived.count(mUnit) == 0));
-    if (ImGui::Button(p->derived.count(mUnit) != 0 ? "Remove unit" : "Revert unit")) {
+    ImGui::BeginDisabled(mUnit.empty() || (!p->edits.contains(mUnit) && !p->derived.contains(mUnit)));
+    if (ImGui::Button(p->derived.contains(mUnit) ? "Remove unit" : "Revert unit")) {
       const ModChanges before = ModChangesOf(*p);
       p->edits.erase(mUnit);
       const bool removed = p->derived.erase(mUnit) != 0;
@@ -300,7 +300,7 @@ namespace faf::editor
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!canPlay || p->Empty());
-    if (p->derived.count(mUnit) != 0) {
+    if (p->derived.contains(mUnit)) {
       if (ImGui::Button("Model from an OBJ...")) {
         mModelAsk = mUnit;
       }

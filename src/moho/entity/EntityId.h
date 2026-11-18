@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace moho
 {
@@ -48,7 +49,7 @@ namespace moho
     const EEntityIdBitMask rhs
   ) noexcept
   {
-    return static_cast<EEntityIdBitMask>(static_cast<std::uint32_t>(lhs) | static_cast<std::uint32_t>(rhs));
+    return static_cast<EEntityIdBitMask>(std::to_underlying(lhs) | std::to_underlying(rhs));
   }
 
   [[nodiscard]] constexpr EEntityIdBitMask operator&(
@@ -56,7 +57,7 @@ namespace moho
     const EEntityIdBitMask rhs
   ) noexcept
   {
-    return static_cast<EEntityIdBitMask>(static_cast<std::uint32_t>(lhs) & static_cast<std::uint32_t>(rhs));
+    return static_cast<EEntityIdBitMask>(std::to_underlying(lhs) & std::to_underlying(rhs));
   }
 
   constexpr std::uint32_t kEntityIdFamilyShift = 28u;
@@ -68,14 +69,14 @@ namespace moho
     const EEntityIdBitMask mask
   ) noexcept
   {
-    return static_cast<std::underlying_type_t<EEntityIdBitMask>>(mask);
+    return std::to_underlying(mask);
   }
 
   [[nodiscard]] constexpr std::uint32_t ToRaw(
     const EEntityIdSentinel value
   ) noexcept
   {
-    return static_cast<std::underlying_type_t<EEntityIdSentinel>>(value);
+    return std::to_underlying(value);
   }
 
   [[nodiscard]] constexpr std::uint8_t ExtractEntityIdSourceIndex(

@@ -132,7 +132,7 @@ namespace faf::editor
       mPendingOpen = nullptr;
       ImGui::CloseCurrentPopup();
     }
-    if (!mStatus.empty() && mStatus.rfind("Can't", 0) == 0) {
+    if (!mStatus.empty() && mStatus.starts_with("Can't")) {
       ImGui::TextColored(ImVec4(0.95f, 0.45f, 0.35f, 1.0f), "%s", mStatus.c_str());
     }
     ImGui::EndPopup();
@@ -261,17 +261,15 @@ namespace faf::editor
       mStatus = "Can't read " + path;
       return false;
     }
-    EmitterBlueprint read;
-    std::string error;
-    if (!ParseEmitter(text, read, error)) {
-      FlatBlueprint flat;
-      std::string flatError;
-      if (!ParseFlatBlueprint(text, flat, flatError)) {
-        mStatus = path + ": " + error;
+    const auto read = ParseEmitter(text);
+    if (!read) {
+      auto flat = ParseFlatBlueprint(text);
+      if (!flat) {
+        mStatus = path + ": " + read.error();
         return false;
       }
       ClearGraph();
-      mFlat = std::move(flat);
+      mFlat = std::move(*flat);
       mFlatMode = true;
       mGamePath = path;
       mName = BaseName(path);
@@ -286,7 +284,7 @@ namespace faf::editor
     mGamePath = path;
     mName = BaseName(path);
     mPath.clear(); // the game's own: Save writes a copy into the map's folder
-    SetGraph(BaseName(path), {{BaseName(path), read}}, path);
+    SetGraph(BaseName(path), {{BaseName(path), *read}}, path);
     mStatus = "Opened " + path;
     return true;
   }
@@ -774,7 +772,7 @@ namespace faf::editor
     if (ImGui::BeginChild("##list", ImVec2(0.0f, 0.0f))) {
       int shown = 0;
       for (const std::string& path : mGameEmitters) {
-        if (!filter.empty() && Lower(path).find(filter) == std::string::npos) {
+        if (!filter.empty() && !Lower(path).contains(filter)) {
           continue;
         }
         if (++shown > 400) {

@@ -24,7 +24,7 @@ namespace fa
   class auto_ptr
   {
   public:
-    typedef T element_type;
+    using element_type = T;
 
     // constructors
     /**
@@ -336,6 +336,6 @@ namespace fa
 } // namespace fa
 
 // Size check for 32-bit builds (x86). Will intentionally fail on x64.
-#if defined(_M_IX86) || defined(__i386__)
-typedef char msvc8_auto_ptr_size_check[(sizeof(fa::auto_ptr<int>) == 4) ? 1 : -1];
+#if FAFRE_ARCH_X86
+static_assert(sizeof(fa::auto_ptr<int>) == 4, "fa::auto_ptr must stay one pointer on x86");
 #endif

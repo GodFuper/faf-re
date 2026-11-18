@@ -6,6 +6,8 @@
 // Build: cmake --build --preset clang-x64-release --target faf_netchannel_tests
 // Run:   build\clang-x64-release\tests\remote\faf_netchannel_tests.exe
 
+#include <print>
+#include <utility>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -259,7 +261,7 @@ namespace
       } else if (newest - sequence >= ReceiveWindow::kSize) {
         expected = ReceiveWindow::Verdict::TooOld;
       } else {
-        expected = seen.count(sequence) ? ReceiveWindow::Verdict::Duplicate : ReceiveWindow::Verdict::New;
+        expected = seen.contains(sequence) ? ReceiveWindow::Verdict::Duplicate : ReceiveWindow::Verdict::New;
       }
       const ReceiveWindow::Verdict got = window.Check(sequence);
       EXPECT_EQ(got, expected);
@@ -273,7 +275,7 @@ namespace
       }
       std::uint32_t bits = 0;
       for (std::uint32_t k = 0; k < 32; ++k) {
-        if (newest > k + 1 && seen.count(newest - 1 - k)) {
+        if (newest > k + 1 && seen.contains(newest - 1 - k)) {
           bits |= 1u << k;
         }
       }
@@ -436,9 +438,7 @@ namespace
         return toB.inOrder && toA.inOrder;
       }
     }
-    std::printf(
-      "    stalled: %zu/%zu to B, %zu/%zu to A\n", toB.received, toB.sent.size(), toA.received, toA.sent.size()
-    );
+    std::println("    stalled: {}/{} to B, {}/{} to A", toB.received, toB.sent.size(), toA.received, toA.sent.size());
     return false;
   }
 
@@ -472,10 +472,10 @@ namespace
       const bool ok = RunReliable(pair, 300, 300'000, &doneMs);
       EXPECT_TRUE(ok);
       const ChannelStats& s = pair.a.Stats();
-      std::printf(
-        "    latency %llu ms, jitter %llu, loss %.0f%%, dup %.0f%%: done in %llu ms, %llu datagrams, %llu lost, "
-        "%llu bytes resent (%llu spurious losses, reorder allowance %u datagrams, %u/8 RTT), srtt %.1f ms, "
-        "B dropped %llu duplicates\n",
+      std::println(
+        "    latency {} ms, jitter {}, loss {:.0f}%, dup {:.0f}%: done in {} ms, {} datagrams, {} lost, {} bytes "
+        "resent ({} spurious losses, reorder allowance {} datagrams, {}/8 RTT), srtt {:.1f} ms, B dropped {} "
+        "duplicates",
         static_cast<unsigned long long>(c.latencyMs),
         static_cast<unsigned long long>(c.jitterMs),
         c.loss * 100,
@@ -649,8 +649,8 @@ namespace
     }
     EXPECT_TRUE(intact);
     const double share = static_cast<double>(got.size()) / static_cast<double>(sent.size());
-    std::printf(
-      "    %zu of %zu unreliable messages arrived (%.1f%%) at 20%% loss\n", got.size(), sent.size(), share * 100
+    std::println(
+      "    {} of {} unreliable messages arrived ({:.1f}%) at 20% loss", got.size(), sent.size(), share * 100
     );
     EXPECT_TRUE(share > 0.7 && share < 0.9);
   }
@@ -702,9 +702,9 @@ namespace
     std::uint64_t repeats2 = 0;
     const double plain = LaneDelivery(0, &repeats0);
     const double redundant = LaneDelivery(2, &repeats2);
-    std::printf(
-      "    20%% loss each way, a message every 33 ms: %.1f%% arrive with no repeats, %.2f%% with redundancy 2 "
-      "(%llu repeats)\n",
+    std::println(
+      "    20% loss each way, a message every 33 ms: {:.1f}% arrive with no repeats, {:.2f}% with redundancy 2 ({} "
+      "repeats)",
       plain * 100,
       redundant * 100,
       static_cast<unsigned long long>(repeats2)
@@ -712,6 +712,122 @@ namespace
     EXPECT_EQ(repeats0, 0);
     EXPECT_TRUE(plain > 0.75 && plain < 0.85);
     EXPECT_TRUE(redundant > 0.985);
+  }
+
+  // Reliable repeats (ChannelConfig::reliableRepeats, game links between players): a game beat every 100 ms over 5 %
+  // loss each way at 50 ms one way. Without repeats a lost beat waits for loss detection; with 2 it usually comes in
+  // the next datagram, at most 30 ms later. Every message arrives once, intact and in order either way. Returns the
+  // 99th percentile of the delivery times (ms) and the bytes A sent.
+  std::pair<double, std::uint64_t> ReliableRepeatDelivery(
+    const std::uint32_t repeats
+  )
+  {
+    ChannelConfig config;
+    config.reliableRepeats = repeats;
+    LinkConfig link;
+    link.latencyUs = 50'000;
+    link.loss = 0.05;
+    Pair pair(config, link, 41);
+    std::mt19937_64 rng(42);
+    std::vector<Bytes> sent;
+    std::vector<std::uint64_t> sentAt;
+    std::vector<double> delays;
+    std::size_t next = 0;
+    bool intact = true;
+    for (int ms = 0; ms < 120'000; ++ms) {
+      if (ms < 118'000 && ms % 100 == 0) {
+        Bytes m = RandomBytes(rng, 20 + rng() % 120);
+        m[0] = static_cast<std::uint8_t>(sent.size());
+        m[1] = static_cast<std::uint8_t>(sent.size() >> 8);
+        EXPECT_TRUE(pair.a.SendReliable(m.data(), m.size()));
+        sentAt.push_back(pair.now);
+        sent.push_back(std::move(m));
+      }
+      pair.Step();
+      Bytes got;
+      while (pair.b.TakeReliable(got)) {
+        intact = intact && next < sent.size() && sent[next] == got;
+        delays.push_back(static_cast<double>(pair.now - sentAt[next]) / 1000.0);
+        ++next;
+      }
+    }
+    EXPECT_TRUE(intact);
+    EXPECT_EQ(next, sent.size());
+    std::sort(delays.begin(), delays.end());
+    const double p99 = delays.empty() ? 0.0 : delays[delays.size() * 99 / 100];
+    return {p99, pair.a.Stats().bytesSent};
+  }
+
+  void TestReliableRepeats()
+  {
+    const auto [plainP99, plainBytes] = ReliableRepeatDelivery(0);
+    const auto [repeatP99, repeatBytes] = ReliableRepeatDelivery(2);
+    std::println(
+      "    5% loss each way, 50 ms one way, a beat every 100 ms: 99% of beats within {:.0f} ms without repeats ({} "
+      "bytes "
+      "sent), {:.0f} ms with 2 ({} bytes)",
+      plainP99,
+      static_cast<unsigned long long>(plainBytes),
+      repeatP99,
+      static_cast<unsigned long long>(repeatBytes)
+    );
+    EXPECT_TRUE(repeatP99 < plainP99);
+    EXPECT_TRUE(repeatP99 <= 100.0);
+  }
+
+  // After an outage (resendAfterSilenceUs): beats every 100 ms over a 25 ms link cut for 3 s. Without the option the
+  // beats written during the cut wait for a timeout that doubled through it; with it the peer's first datagram after
+  // the cut sends them again at once. Returns the longest delivery time (ms) of a beat written during the cut,
+  // counted from the end of the cut.
+  double AfterOutage(
+    const std::uint64_t resendAfterSilenceUs
+  )
+  {
+    ChannelConfig config;
+    config.reliableRepeats = 2;
+    config.keepaliveIntervalUs = 250'000;
+    config.resendAfterSilenceUs = resendAfterSilenceUs;
+    LinkConfig link;
+    link.latencyUs = 25'000;
+    link.partitions.push_back({10'000'000, 13'000'000});
+    Pair pair(config, link, 51);
+    std::vector<std::uint64_t> sentAt;
+    std::size_t next = 0;
+    double worst = 0.0;
+    for (int ms = 0; ms < 20'000; ++ms) {
+      if (ms % 100 == 0) {
+        const std::uint8_t beat[2] = {
+          static_cast<std::uint8_t>(sentAt.size()), static_cast<std::uint8_t>(sentAt.size() >> 8)
+        };
+        EXPECT_TRUE(pair.a.SendReliable(beat, sizeof(beat)));
+        sentAt.push_back(pair.now);
+      }
+      pair.Step();
+      Bytes got;
+      while (pair.b.TakeReliable(got)) {
+        if (sentAt[next] >= 10'000'000 && sentAt[next] < 13'000'000) {
+          worst = std::max(worst, static_cast<double>(pair.now - 13'000'000) / 1000.0);
+        }
+        ++next;
+      }
+    }
+    EXPECT_EQ(next, sentAt.size());
+    return worst;
+  }
+
+  void TestResendAfterSilence()
+  {
+    const double plain = AfterOutage(0);
+    const double recovering = AfterOutage(500'000);
+    std::println(
+      "    3 s cut, a beat every 100 ms: the last beat of the cut arrived {:.0f} ms after it without the option, "
+      "{:.0f} ms "
+      "with it",
+      plain,
+      recovering
+    );
+    EXPECT_TRUE(recovering < plain);
+    EXPECT_TRUE(recovering <= 400.0); // the next keepalive either way (250 ms) and a round trip
   }
 
   // --- WP10.6: AEAD -----------------------------------------------------------------------
@@ -723,7 +839,7 @@ namespace
     for (std::size_t i = 0; i < kKeySize; ++i) {
       key[i] = static_cast<std::uint8_t>(rng());
     }
-    for (const std::size_t payloadSize : {std::size_t{0}, std::size_t{1}, std::size_t{100}, std::size_t{1168}}) {
+    for (const std::size_t payloadSize : {0uz, 1uz, 100uz, 1168uz}) {
       const Bytes payload = RandomBytes(rng, payloadSize);
       Bytes datagram(kHeaderSize + payloadSize + kTagSize);
       DatagramHeader header;
@@ -862,9 +978,9 @@ namespace
       Bytes drop;
       while (pair.b.TakeUnreliable(drop)) {}
     }
-    std::printf(
-      "    keys set at 2.000 s (A) and 2.080 s (B): %zu/%zu and %zu/%zu messages in order, B refused %llu "
-      "unauthenticated, A dropped %llu unreliable that no longer fit\n",
+    std::println(
+      "    keys set at 2.000 s (A) and 2.080 s (B): {}/{} and {}/{} messages in order, B refused {} unauthenticated, A "
+      "dropped {} unreliable that no longer fit",
       toB.received,
       toB.sent.size(),
       toA.received,
@@ -973,9 +1089,9 @@ namespace
       pair.Step();
     }
     const ChannelStats& s = pair.a.Stats();
-    std::printf(
-      "    idle 20 s at 80-88 ms RTT: %llu keepalives, %llu ack-only, %llu RTT samples, srtt %.1f ms, var %.1f, min "
-      "%.1f\n",
+    std::println(
+      "    idle 20 s at 80-88 ms RTT: {} keepalives, {} ack-only, {} RTT samples, srtt {:.1f} ms, var {:.1f}, min "
+      "{:.1f}",
       static_cast<unsigned long long>(s.keepalivesSent),
       static_cast<unsigned long long>(s.ackOnlySent),
       static_cast<unsigned long long>(s.rttSamples),
@@ -1013,9 +1129,9 @@ namespace
     const double lost = static_cast<double>(s.datagramsLost) / static_cast<double>(s.datagramsLost + s.datagramsAcked);
     const double inbound = static_cast<double>(pair.b.Stats().inboundMissing) /
       static_cast<double>(pair.b.Stats().inboundMissing + pair.b.Stats().datagramsReceived);
-    std::printf(
-      "    10%% loss each way, 60 s: A counted %.1f%% of its datagrams lost (recent %.1f%%), B saw %.1f%% of A's "
-      "sequences missing, srtt %.1f ms\n",
+    std::println(
+      "    10% loss each way, 60 s: A counted {:.1f}% of its datagrams lost (recent {:.1f}%), B saw {:.1f}% of A's "
+      "sequences missing, srtt {:.1f} ms",
       lost * 100,
       s.lossRecent * 100,
       inbound * 100,
@@ -1064,8 +1180,8 @@ namespace
         );
       }
     }
-    std::printf(
-      "    12 s partition from 1 s: A timed out at %.3f s, B at %.3f s\n", timedOutAtA / 1e6, timedOutAtB / 1e6
+    std::println(
+      "    12 s partition from 1 s: A timed out at {:.3f} s, B at {:.3f} s", timedOutAtA / 1e6, timedOutAtB / 1e6
     );
     // The last arrival is the last keepalive exchange before the cut, at most 250 ms + RTT before it.
     EXPECT_TRUE(timedOutAtA >= 10'700'000 && timedOutAtA <= 11'031'000);
@@ -1095,7 +1211,7 @@ namespace
       }
     }
     const std::uint64_t duringCut = pair.carried - carriedAtCut;
-    std::printf("    8 s partition: %llu bytes sent into it\n", static_cast<unsigned long long>(duringCut));
+    std::println("    8 s partition: {} bytes sent into it", static_cast<unsigned long long>(duringCut));
     // The whole message is in flight at most a handful of times, not once per 50 ms.
     EXPECT_TRUE(duringCut < 12 * big.size());
     Bytes got;
@@ -1163,11 +1279,11 @@ namespace
         while (target.TakeUnreliable(drop)) {}
         EXPECT_TRUE(target.ReliableHeld() <= ChannelConfig{}.receiveWindow);
       }
-      std::printf(
-        "    fuzz (%s): 200000 datagrams, %llu accepted, state %d\n",
+      std::println(
+        "    fuzz ({}): 200000 datagrams, {} accepted, state {}",
         keyed ? "keys set" : "no keys",
         static_cast<unsigned long long>(accepted),
-        static_cast<int>(target.State())
+        std::to_underlying(target.State())
       );
       if (keyed) {
         EXPECT_EQ(accepted, 0); // nothing forged or mutated gets past the tag
@@ -1234,6 +1350,20 @@ TEST(
 )
 {
   TestCongestionWindow();
+}
+TEST(
+  NetChannel,
+  ReliableRepeats
+)
+{
+  TestReliableRepeats();
+}
+TEST(
+  NetChannel,
+  ResendAfterSilence
+)
+{
+  TestResendAfterSilence();
 }
 TEST(
   Existing_NetChannel,

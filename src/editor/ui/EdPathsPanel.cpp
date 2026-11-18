@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <ranges>
+#include <functional>
 
 namespace faf::editor
 {
@@ -137,7 +139,7 @@ namespace faf::editor
           label,
           sizeof(label),
           "%s%s  (%s, %zu points)%s###%s",
-          state.results.count(p.id) != 0 ? "\xE2\x97\x8F " : "",
+          state.results.contains(p.id) ? "\xE2\x97\x8F " : "",
           p.name.c_str(),
           KeptPathModeName(p.mode),
           p.points.size(),
@@ -343,7 +345,7 @@ namespace faf::editor
     if (ImGui::Button("Delete the chosen points")) {
       EdDocument::PathsState before = mDocument.PathsNow();
       std::vector<int> order = sel;
-      std::sort(order.rbegin(), order.rend());
+      std::ranges::sort(order, std::ranges::greater{});
       for (const int i : order) {
         path.points.erase(path.points.begin() + i);
       }
@@ -368,10 +370,10 @@ namespace faf::editor
           current = static_cast<int>(i);
         }
       }
-      std::vector<const char*> labels;
-      for (const auto& p : presets) {
-        labels.push_back(p.label);
-      }
+      auto labels = presets | std::views::transform([&](const auto& p) {
+        return p.label;
+      }) |
+        std::ranges::to<std::vector<const char*>>();
       RowLabel("Preset");
       ImGui::SetNextItemWidth(-1.0f);
       const bool changed = EdCombo("##preset", &current, labels.data(), static_cast<int>(labels.size()));
@@ -530,7 +532,7 @@ namespace faf::editor
     if (!Section("Apply")) {
       return;
     }
-    const bool applied = mDocument.PathsNow().results.count(path.id) != 0;
+    const bool applied = mDocument.PathsNow().results.contains(path.id);
     const std::string id = path.id;
     if (ImGui::Button("Preview")) {
       mState.ask = PathEditState::Ask::Preview;
@@ -599,12 +601,15 @@ namespace faf::editor
     }
     ImGui::SameLine();
     if (ImGui::Button("Paste")) {
-      KeptPathSet pasted;
       std::string error;
       const char* const text = ImGui::GetClipboardText();
-      if (text != nullptr && ReadKeptPaths(text, pasted, error) && !pasted.paths.empty()) {
+      auto pasted = text != nullptr ? ReadKeptPaths(text) : std::expected<KeptPathSet, std::string>(std::unexpect);
+      if (!pasted) {
+        error = pasted.error();
+      }
+      if (pasted && !pasted->paths.empty()) {
         EdDocument::PathsState before = mDocument.PathsNow();
-        for (KeptPath& p : pasted.paths) {
+        for (KeptPath& p : pasted->paths) {
           p.id = mDocument.EditPaths().set.TakeId();
           p.name += " (pasted)";
           p.skeleton = false;
@@ -613,7 +618,7 @@ namespace faf::editor
         }
         mDocument.PathsEdited(std::move(before));
         mFrameStart = mDocument.PathsNow();
-        gpg::Logf("editor: paths: %zu pasted", pasted.paths.size());
+        gpg::Logf("editor: paths: %zu pasted", pasted->paths.size());
         return;
       }
       gpg::Warnf("editor: paths: the clipboard holds no path%s%s", error.empty() ? "" : ": ", error.c_str());

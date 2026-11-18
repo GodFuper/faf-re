@@ -31,21 +31,17 @@ namespace faf::editor
     }
   } // namespace
 
-  bool ReadScm(
-    const std::vector<std::uint8_t>& bytes,
-    ScmModel& out,
-    std::string& error
+  std::expected<ScmModel, std::string> ReadScm(
+    const std::vector<std::uint8_t>& bytes
   )
   {
-    out = ScmModel{};
+    ScmModel out;
     if (bytes.size() < 0x30 || std::memcmp(bytes.data(), "MODL", 4) != 0) {
-      error = "not an .scm file (no MODL header)";
-      return false;
+      return std::unexpected("not an .scm file (no MODL header)");
     }
     out.version = static_cast<int>(U32(bytes, 0x04));
     if (out.version != 5) {
-      error = "an .scm of version " + std::to_string(out.version) + " (the game's are 5)";
-      return false;
+      return std::unexpected("an .scm of version " + std::to_string(out.version) + " (the game's are 5)");
     }
     out.bones = static_cast<int>(U32(bytes, 0x2C));
     const std::uint32_t vertexAt = U32(bytes, 0x10);
@@ -59,8 +55,7 @@ namespace faf::editor
       static_cast<std::uint64_t>(vertexAt) + static_cast<std::uint64_t>(vertexCount) * kVertex > bytes.size() ||
       static_cast<std::uint64_t>(indexAt) + static_cast<std::uint64_t>(indexCount) * 2U > bytes.size()
     ) {
-      error = "the file is shorter than its header says";
-      return false;
+      return std::unexpected("the file is shorter than its header says");
     }
     for (std::uint32_t v = 0; v < vertexCount; ++v) {
       const std::size_t at = vertexAt + v * kVertex;
@@ -73,8 +68,9 @@ namespace faf::editor
       const std::uint32_t index =
         static_cast<std::uint32_t>(bytes[at]) | (static_cast<std::uint32_t>(bytes[at + 1]) << 8);
       if (index >= vertexCount) {
-        error = "a triangle names vertex " + std::to_string(index) + " of " + std::to_string(vertexCount);
-        return false;
+        return std::unexpected(
+          "a triangle names vertex " + std::to_string(index) + " of " + std::to_string(vertexCount)
+        );
       }
       out.indexes.push_back(index);
     }
@@ -84,7 +80,7 @@ namespace faf::editor
         out.info.pop_back();
       }
     }
-    return true;
+    return out;
   }
 
   std::string ObjFromScm(
@@ -152,12 +148,56 @@ namespace faf::editor
         uv[1] = 1.0f - uv[1];
       }
     }
-    if (options.normals == 1) {
-      // Made from the faces: the file's normals dropped (ScmFromObj makes them).
+    // Normals (FAF Studio's File / auto, Smooth, Flat): smooth ones are each position's faces' normals weighted by
+    // their area; auto keeps the file's and smooths only the corners without one; flat gives each triangle its own.
+    if (options.normals == 2) {
       out.normals.clear();
       for (auto& triangle : out.triangles) {
-        for (ObjMesh::Corner& c : triangle) {
-          c.normal = -1;
+        const auto& a = out.positions[static_cast<std::size_t>(triangle[0].position)];
+        const auto& b = out.positions[static_cast<std::size_t>(triangle[1].position)];
+        const auto& c = out.positions[static_cast<std::size_t>(triangle[2].position)];
+        const std::array<float, 3> e1{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+        const std::array<float, 3> e2{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+        out.normals.push_back(
+          {e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]}
+        );
+        for (ObjMesh::Corner& corner : triangle) {
+          corner.normal = static_cast<int>(out.normals.size()) - 1;
+        }
+      }
+    } else {
+      bool missing = options.normals == 1;
+      for (const auto& triangle : out.triangles) {
+        for (const ObjMesh::Corner& corner : triangle) {
+          missing = missing || corner.normal < 0 || corner.normal >= static_cast<int>(out.normals.size());
+        }
+      }
+      if (missing) {
+        std::vector<std::array<float, 3>> smooth(out.positions.size(), std::array<float, 3>{0, 0, 0});
+        for (const auto& triangle : out.triangles) {
+          const auto& a = out.positions[static_cast<std::size_t>(triangle[0].position)];
+          const auto& b = out.positions[static_cast<std::size_t>(triangle[1].position)];
+          const auto& c = out.positions[static_cast<std::size_t>(triangle[2].position)];
+          const std::array<float, 3> e1{b[0] - a[0], b[1] - a[1], b[2] - a[2]};
+          const std::array<float, 3> e2{c[0] - a[0], c[1] - a[1], c[2] - a[2]};
+          const std::array<float, 3> n{
+            e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]
+          };
+          for (const ObjMesh::Corner& corner : triangle) {
+            for (int k = 0; k < 3; ++k) {
+              smooth[static_cast<std::size_t>(corner.position)][static_cast<std::size_t>(k)] +=
+                n[static_cast<std::size_t>(k)];
+            }
+          }
+        }
+        const int base = static_cast<int>(out.normals.size());
+        out.normals.insert(out.normals.end(), smooth.begin(), smooth.end());
+        for (auto& triangle : out.triangles) {
+          for (ObjMesh::Corner& corner : triangle) {
+            if (options.normals == 1 || corner.normal < 0 || corner.normal >= base) {
+              corner.normal = base + corner.position;
+            }
+          }
         }
       }
     }
@@ -173,6 +213,40 @@ namespace faf::editor
       }
     }
     return out;
+  }
+
+  std::vector<std::pair<std::string, ObjMesh>> SplitByMaterial(
+    const ObjMesh& mesh,
+    const int materialsBy
+  )
+  {
+    // FAF Studio's "Materials by": the OBJ's usemtl names, its o / g groups, or one for all ("ground").
+    const std::vector<int>& of = materialsBy == 0 ? mesh.triangleMaterial : mesh.triangleGroup;
+    const std::vector<std::string>& names = materialsBy == 0 ? mesh.materials : mesh.groups;
+    std::vector<std::pair<std::string, ObjMesh>> parts;
+    std::map<int, std::size_t> partOf;
+    for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
+      const int which = materialsBy == 2 || t >= of.size() ? -1 : of[t];
+      auto found = partOf.find(which);
+      if (found == partOf.end()) {
+        ObjMesh part;
+        part.positions = mesh.positions;
+        part.uvs = mesh.uvs;
+        part.normals = mesh.normals;
+        part.groups = mesh.groups;
+        part.materials = mesh.materials;
+        part.uv2Size = mesh.uv2Size;
+        const std::string name =
+          which >= 0 && which < static_cast<int>(names.size()) ? names[static_cast<std::size_t>(which)] : "ground";
+        found = partOf.emplace(which, parts.size()).first;
+        parts.emplace_back(name, std::move(part));
+      }
+      ObjMesh& part = parts[found->second].second;
+      part.triangles.push_back(mesh.triangles[t]);
+      part.triangleGroup.push_back(t < mesh.triangleGroup.size() ? mesh.triangleGroup[t] : -1);
+      part.triangleMaterial.push_back(t < mesh.triangleMaterial.size() ? mesh.triangleMaterial[t] : -1);
+    }
+    return parts;
   }
 
   std::map<std::pair<int, int>, ObjMesh> SplitMesh(
@@ -214,7 +288,7 @@ namespace faf::editor
       for (const auto& triangle : part.triangles) {
         std::size_t extra = 0;
         for (const ObjMesh::Corner& c : triangle) {
-          extra += used.count(c.position) == 0 ? 1 : 0;
+          extra += !used.contains(c.position) ? 1 : 0;
         }
         if (used.size() + extra > limit) {
           flush();

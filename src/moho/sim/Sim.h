@@ -144,7 +144,7 @@ namespace moho
 {
   // Keep local id aliases visible even when transitive Entity typedef visibility
   // is disrupted during partial IntelliSense parses.
-  typedef std::int32_t EntId;
+  using EntId = std::int32_t;
   struct EntIdUniverse;
 
   class PathTables;
@@ -7419,7 +7419,7 @@ namespace moho
     void Init() override;
   };
 
-#if defined(_M_IX86)
+#if FAFRE_ARCH_X86
   static_assert(sizeof(SimSerializer) == 0x14, "SimSerializer size must be 0x14");
   static_assert(sizeof(SimTypeInfo) == 0x64, "SimTypeInfo size must be 0x64");
   static_assert(sizeof(CRandomStream) == 0x9CC, "CRandomStream size must be 0x9CC");

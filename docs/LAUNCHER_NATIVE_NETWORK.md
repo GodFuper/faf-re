@@ -2,7 +2,7 @@
 
 Issue #274. With the switch `/nativenet` the game runs every peer link itself: ICE over libjuice, a link that FAF's Java ICE adapter accepts as one of its own, and WebRTC between two of our builds. The launcher starts no adapter. It talks to the game over GPGNet directly, as FAF clients did before ICE adapters existed. Without the switch nothing changes: the game talks to an adapter as described in [LAUNCHER_ADAPTER_CONTRACT.md](LAUNCHER_ADAPTER_CONTRACT.md).
 
-This page is what a launcher needs to support the mode: downlords-faf-client (open PR [FAForever/downlords-faf-client#3590](https://github.com/FAForever/downlords-faf-client/pull/3590), for `fafdevelop` games whose exe is ours, unless the player turns its "Game's own network on FAF Develop" setting off), FAForeverRustClient (not started), and `tools/seat` (mpemu) today. The lobby server needs no change.
+This page is what a launcher needs to support the mode: downlords-faf-client (open PR [FAForever/downlords-faf-client#3599](https://github.com/FAForever/downlords-faf-client/pull/3599), for `fafdevelop` games whose exe is ours, unless the player turns its "Game's own network on FAF Develop" setting off; returning after a crash is [#3590](https://github.com/FAForever/downlords-faf-client/pull/3590), on top of it), FAForeverRustClient (not started), and `tools/seat` (mpemu) today. The lobby server needs no change.
 
 ## What the launcher does
 
@@ -62,7 +62,7 @@ A launcher checks `ProductName` only, under the string table `040904b0`. On Wind
 | `/nativenetrelay` | only TURN-relayed candidates: the client's "force relay" setting, or the API session's `forceRelay` |
 | `/nativenetbind <address>` | ICE host candidates use this local address. Optional; for machines that drop loopback UDP to sockets bound to every interface |
 
-`net_NativeNetWebRtc` (default 0; 1 enables it) offers a WebRTC data channel to peers that are our builds too (#239). A channel opens only when both sides offer it. It stays off because raw ICE with the lane came out ahead in the comparison posted on PR #277. `net_NativeNetRedundancy` (default 2) carries game datagrams to those peers on the redundant lane, each repeated up to that many times until acked (#240). `net_NativeNetEncrypt` (default 1; 0 turns it off) encrypts that lane with peers that offer it too, with keys agreed per connection from public keys in the ICE ufrag (#289, [NETBRIDGE.md](NETBRIDGE.md#lane-encryption-289)). A Java adapter peer keeps the plain ICE link; an older build of ours gets the lane unencrypted.
+`net_NativeNetWebRtc` (default 0; 1 enables it) offers a WebRTC data channel to peers that are our builds too (#239). A channel opens only when both sides offer it. It stays off because raw ICE with the lane came out ahead in the comparison posted on PR #277. `net_NativeNetRedundancy` (default 2) carries game datagrams to those peers on the redundant lane, each repeated up to that many times until acked (#240). `net_NativeNetEncrypt` (default 1; 0 turns it off) encrypts that lane with peers that offer it too, with keys agreed per connection from public keys in the ICE ufrag (#289, [NETBRIDGE.md](NETBRIDGE.md#lane-encryption-289)). A Java adapter peer keeps the plain ICE link; an older build of ours gets the lane unencrypted. `net_GameChannel` (default 1) offers the game channel: with a peer that offers it too, each connection carries its stream on a net channel instead of the lane, encrypted with the same keys ([NETWORK_MEASUREMENTS.md](NETWORK_MEASUREMENTS.md)). Its ufrag mark, `s+`, is unknown to builds from before it, so between such a build and this one the lane stays on and neither end encrypts it.
 
 ## Inside the game
 
@@ -119,7 +119,7 @@ The icon has its own thread and window, so the menu works while the game window 
 
 From reading both clients (Java: downlords-faf-client `develop` 66e624f119; Rust: FAForeverRustClient `develop` 70c88a5f9b, both 2026-10-31):
 
-- **downlords-faf-client.** Implement a second `IceAdapter` (`fa/relay/ice/IceAdapter.java`), chosen per game (#3590 picks it for `fafdevelop` with our exe, with a setting, on by default, that falls back to the Java adapter). Offer such a fallback: our exe plays with the adapter too, and players on either side still connect to each other.
+- **downlords-faf-client.** Implement a second `IceAdapter` (`fa/relay/ice/IceAdapter.java`), chosen per game (FAForever/downlords-faf-client#3599 picks it for `fafdevelop` with our exe, with a setting, on by default, that falls back to the Java adapter). Offer such a fallback: our exe plays with the adapter too, and players on either side still connect to each other.
   - Its `start` opens the GPGNet listener and returns its port. `LaunchCommandBuilder` already writes `/gpgnet` from that port; add `/nativenet` beside it.
   - Move the lobby subscriptions in `IceAdapterImpl.java:81-111` behind the choice, so only one implementation forwards.
   - The client has no GPGNet codec today, so one is needed. The adapter jar's `GPGNetServer` is the reference; `tools/gpgnet/codec.go` in this repository is another.

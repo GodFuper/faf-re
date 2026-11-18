@@ -1,6 +1,7 @@
 #include "moho/unit/tasks/CUnitAttackTargetTask.h"
 #include "moho/unit/tasks/TaskThreadWake.h"
 
+#include <utility>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -274,7 +275,7 @@ namespace moho
     mIsGrounded = 1u;
     mPad008F = 0u;
 
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     Unit* const unit = commandTask->mUnit;
     if (unit == nullptr) {
       commandTask->mTaskState = TASKSTATE_Preparing;
@@ -377,7 +378,7 @@ namespace moho
    */
   CUnitAttackTargetTask::~CUnitAttackTargetTask()
   {
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     Unit* const unit = commandTask->mUnit;
 
     if (unit != nullptr) {
@@ -640,7 +641,7 @@ namespace moho
    */
   void CUnitAttackTargetTask::Update()
   {
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     Unit* const unit = commandTask->mUnit;
     if (unit == nullptr) {
       return;
@@ -678,7 +679,7 @@ namespace moho
         mTargetPosition = COORDS_ToWorldPos(
           unit->SimulationRef->mMapData,
           adjustedPosition,
-          static_cast<ELayer>(static_cast<std::uint8_t>(footprint.mOccupancyCaps)),
+          static_cast<ELayer>(std::to_underlying(footprint.mOccupancyCaps)),
           static_cast<int>(footprint.mSizeX),
           static_cast<int>(footprint.mSizeZ)
         );
@@ -786,13 +787,13 @@ namespace moho
     const EAiAttackerEvent event
   )
   {
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     if (commandTask->mTaskState == TASKSTATE_5) {
       return;
     }
 
     if (mTarget.HasTarget()) {
-      switch (static_cast<std::int32_t>(event)) {
+      switch (std::to_underlying(event)) {
       case 1:
         commandTask->mTaskState = TASKSTATE_Complete;
         break;
@@ -861,7 +862,7 @@ namespace moho
     const ECommandEvent
   )
   {
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     if (mCommand == nullptr) {
       commandTask->mTaskState = TASKSTATE_5;
       WakeOwnerThreadForImmediateTick(commandTask);
@@ -980,7 +981,7 @@ namespace moho
       return;
     }
 
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     const gpg::RRef ownerRef{};
 
     archive->Read(gpg::RTypeOf<moho::CCommandTask>(), commandTask, ownerRef);
@@ -1074,7 +1075,7 @@ namespace moho
    */
   int CUnitAttackTargetTask::TaskTick()
   {
-    CCommandTask* const commandTask = const_cast<CCommandTask*>(static_cast<const CCommandTask*>(this));
+    CCommandTask* const commandTask = static_cast<CCommandTask*>(this);
     Unit* const unit = commandTask->mUnit;
     if (unit == nullptr) {
       return -1;

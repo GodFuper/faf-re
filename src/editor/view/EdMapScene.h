@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -216,17 +217,18 @@ namespace faf::editor
     void TestKeptPath(const std::string& spec);
 
     /** Replaces the map's heights from a height image, resampled to the map's size, as one undo step. */
-    bool ImportHeights(const std::filesystem::path& file, float scale, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string> ImportHeights(const std::filesystem::path& file, float scale);
     /** Sets the whole map to one height (Terrain > Flatten map), as one undo step. */
-    bool FlattenWhole(float height, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string> FlattenWhole(float height);
     /**
      * Writes `w` x `h` height samples from (x0, z0), row by row (an editor mod's Editor.SetHeights), as one undo step;
-     * the part off the map is left out. False with `message` when nothing could be written.
+     * the part off the map is left out. The error when nothing could be written.
      */
-    bool WriteHeightRect(int x0, int z0, int w, int h, const std::vector<float>& heights, std::string& message);
+    [[nodiscard]] std::expected<void, std::string>
+    WriteHeightRect(int x0, int z0, int w, int h, const std::vector<float>& heights);
     /** Editor mods: a texture layer's (1..8) weights 0..1 over [x0, x0+w) x [z0, z0+h) of the paint, one undo step. */
-    bool
-    WriteMaskRect(int layer, int x0, int z0, int w, int h, const std::vector<float>& weights, std::string& message);
+    [[nodiscard]] std::expected<void, std::string>
+    WriteMaskRect(int layer, int x0, int z0, int w, int h, const std::vector<float>& weights);
     /** The paint's size in texels (false without a map's paint). */
     bool MaskSize(int& width, int& height);
     /** Editor mods (view/EdMapSceneMods.cpp): the map's props, decals and units, and changes to them, one undo step
@@ -277,7 +279,8 @@ namespace faf::editor
     /** The lowest, highest and mean ground height of the map (false without one). */
     bool HeightRange(float& low, float& high, float& mean) const;
     /** Writes the map's heights as a height image, `width` samples wide (0: the map's own size). */
-    bool ExportHeights(const std::filesystem::path& file, int width, float scale, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string>
+    ExportHeights(const std::filesystem::path& file, int width, float scale);
     /** The point the orbit camera looks at (on the ground): where the particle editor's preview emits. */
     void ViewTarget(
       float& x,
@@ -295,7 +298,7 @@ namespace faf::editor
     /** The open map's ten texture slots (lower, strata 1-8, upper) as the terrain has them. */
     [[nodiscard]] std::vector<EdTools::LayerSlot> LayerSlots() const;
     /** The paint layer's mask cleared, or read from / written to a grey image (PNG, RAW: 0-255 as 0-65535). */
-    bool ClearMaskLayer(int layer, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string> ClearMaskLayer(int layer);
     /** `/followtest props|markers` (test runs): an object with a mirrored copy moved, then deleted, both followed. */
     void TestFollow(const std::string& kind);
     /**
@@ -401,9 +404,9 @@ namespace faf::editor
      */
     int TerrainTypesFromTextures(const std::array<int, 9>& types, bool onlyDefault, std::string& message);
     /** Stratum `layer`'s (0-7) mask full over the whole map, as one undo step. */
-    bool FillMaskLayer(int layer, std::string& message);
-    bool ImportMaskLayer(int layer, const std::filesystem::path& file, std::string& message);
-    bool ExportMaskLayer(int layer, const std::filesystem::path& file, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string> FillMaskLayer(int layer);
+    [[nodiscard]] std::expected<std::string, std::string> ImportMaskLayer(int layer, const std::filesystem::path& file);
+    [[nodiscard]] std::expected<std::string, std::string> ExportMaskLayer(int layer, const std::filesystem::path& file);
     /** Each stratum's share of the map, once the masks are read. */
     [[nodiscard]] bool MaskCoverage(float (&coverage)[8]) const;
     /**
@@ -478,7 +481,7 @@ namespace faf::editor
     );
     void RestoreLayerSlot(int slot);
     /** Stratum `layer`'s (0-7) mask from a grey image over the whole map, as one undo step. */
-    bool SetMaskLayer(int layer, const TexImage& image, std::string& message);
+    [[nodiscard]] std::expected<std::string, std::string> SetMaskLayer(int layer, const TexImage& image);
 
     /** Changes one slot as the Tools panel asked, as one undo step. */
     void ChangeLayerSlot(int slot, const EdTools::LayerSlot& value);
@@ -497,21 +500,16 @@ namespace faf::editor
     {
       return mMarkerSelection;
     }
-    /** Adds a `.fafmapmarkers` file's markers as one undo step and selects them; false with `error`. */
-    bool ImportMarkerFile(const std::string& text, MarkerImport& result, std::string& error);
+    /** Adds a `.fafmapmarkers` file's markers as one undo step and selects them; what it added, or the error. */
+    [[nodiscard]] std::expected<MarkerImport, std::string> ImportMarkerFile(const std::string& text);
     /** The units an export writes: the selected ones, or every unit of `army` when none is selected. */
     [[nodiscard]] std::vector<SaveUnit> UnitsToExport(const std::string& army) const;
     /**
      * Adds a `.scunits` file's units to `army` (its INITIAL group) under new UNIT_n names, on the ground, as one undo
-     * step, and selects them; `moved` when they came from off this map. False with `error`.
+     * step, and selects them; `moved` when they came from off this map. Or the error.
      */
-    bool ImportUnitFile(
-      const std::string& text,
-      const std::string& army,
-      std::vector<std::string>& names,
-      bool& moved,
-      std::string& error
-    );
+    [[nodiscard]] std::expected<void, std::string>
+    ImportUnitFile(const std::string& text, const std::string& army, std::vector<std::string>& names, bool& moved);
     /** Changes a property of a marker ("name" renames it), as one undo step. */
     void EditMarker(const std::string& marker, const std::string& key, const std::string& value);
     /** The first selected Camera Info marker's name, or "". */
@@ -654,22 +652,32 @@ namespace faf::editor
     /**
      * The mesh terrain drawn as the game draws models (FAF Studio's mesh view): each patch a model instance with its
      * material's textures (the NormalMappedTerrain shader: lit, shadowed), the height field hidden in Mesh only
-     * (ren_Terrain), the patches hidden in Terrain only. Made once the rules are up; again on each load.
+     * (ren_TerrainSurface), the patches hidden in Terrain only. Made once the rules are up; again on each load.
      */
     std::vector<moho::MeshInstance*> mMeshPatchInstances;
+    std::vector<int> mMeshPatchKinds; // 0 ground, 1 sky (follows the camera), 2 the fill to the horizon
     std::vector<moho::RMeshBlueprint*> mMeshPatchBlueprints;
     bool mMeshInstancesTried = false;
     bool mMeshHidesTerrain = false;
     void BuildMeshInstances();
     /**
-     * FAF Studio's mesh material baked for one patch (its shader minus the view-dependent sun highlight and the dynamic
-     * shadow): the two layers blended by light mask 1's alpha, the three baked light masks through the blended normal
-     * map, glow, alpha test, the water ramp below the water level, haze into the void colour; one texture over the
-     * patch seen from above, with a copy of the patch whose first texture coordinates span it, both in the editor's
-     * cache (mounted at /editor_meshview). False (and `why`) when it can't be made; the patch is drawn lit instead.
+     * A mesh material as the editor's mesh technique reads it (FAF Studio's material on the game's model path): the
+     * two layers and layer A's normal map as they are, its three light masks baked for the surface's own normal with
+     * the layers' blend (one texture over the patches' second coordinates), its mask with only the glow and highlight
+     * it uses; small stand-ins where it has none. In the editor's cache, mounted at /editor_meshview.
      */
-    bool
-    BakeMeshPatch(std::size_t index, int generation, std::string& meshPath, std::string& albedoPath, std::string& why);
+    struct MeshMaterialView
+    {
+      std::string albedo;
+      std::string secondary;
+      std::string normals;
+      std::string specular; // the baked light and blend
+      std::string lookup;   // the mask
+      bool lightMasks = false;
+      bool alphaTest = false;
+    };
+    [[nodiscard]] std::expected<MeshMaterialView, std::string>
+    BakeMeshMaterial(int material, const std::filesystem::path& folder, const std::string& vfs);
     /** Where the baked patches go (the app's cache folder; empty: no bake). */
     void SetMeshViewCache(
       std::filesystem::path folder
@@ -679,7 +687,18 @@ namespace faf::editor
     }
     std::filesystem::path mMeshViewCache;
     int mMeshBakeGeneration = 0;
+    bool mMeshSetsShadowRange = false; // this scene set the shadow map's extra height range (ren_ShadowExtraMinY)
+    bool mMeshBuiltForBoth = false;    // the patches were made with the Both variants (pulled towards the camera)
+    /** The manifest is in the panel only: the scenario doesn't name a mesh, so the view draws the height field. */
+    bool mMeshViewOff = false;
+    [[nodiscard]] bool MeshInView() const noexcept
+    {
+      return mMeshMap.Loaded() && !mMeshViewOff;
+    }
     void DeleteMeshInstances();
+    /** The patches' shaded triangles and edges for the view (until the models are made, and Both's wires); the count.
+     */
+    std::size_t BuildMeshLines();
     void SyncMeshView();
     /** Test runs: the cursor the view would show with the pointer at `at` (view pixels). */
     [[nodiscard]] int ViewCursorAt(
@@ -1166,6 +1185,15 @@ namespace faf::editor
     }
     /** The patches' checks (EdMeshScan), as lines. */
     [[nodiscard]] std::vector<std::string> CheckMeshTerrain();
+    /**
+     * FAF Studio's Sync map: size, playable area, water, the ground range and the sun from the open map into the mesh
+     * map's settings (given). `fresh` (Studio's New): a new manifest first, with no materials or patches, at the map's
+     * terrain/terrain.lua. The status line.
+     */
+    std::string SyncMeshFromMap(bool fresh);
+    /** The scenario names the mesh (`on`) or not: the view draws the manifest the panel holds as it is, or the height
+     * field; nothing is read again. The status line. */
+    std::string SetMeshInScenario(bool on);
     /** The ground things are placed on: the mesh surface while it is shown (the highest one up to 40 above the field).
      */
     [[nodiscard]] float PlacementHeight(float x, float z) const;

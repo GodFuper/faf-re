@@ -3,7 +3,7 @@
 #include "ShaderCompiler.h"
 #include "gpg/core/utils/EmbeddedFiles.h"
 
-#include <windows.h>
+#include <Windows.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +16,7 @@
 #include <cctype>
 #if FAFRE_PLATFORM_WINDOWS
 #include <d3d12shader.h>
+#include <ranges>
 
 #include "dxcapi.h"
 #else
@@ -258,7 +259,7 @@ namespace gpg::gal::effects
     }
     // Engine addition (ren_RayTracedShadows): an effect with inline ray queries needs shader model 6.5 (DXR 1.1)
     // and, for SPIR-V, Vulkan 1.2's ray query extension. Every stage of it, since they share the declarations.
-    const bool rayQueries = hlsl.find("RayQuery<") != std::string_view::npos;
+    const bool rayQueries = hlsl.contains("RayQuery<");
     std::wstring rayProfile;
     if (rayQueries) {
       rayProfile = profile;
@@ -369,11 +370,10 @@ namespace gpg::gal::effects
   ) const
   {
     CompiledShader result;
-    std::vector<LPCWSTR> argumentPointers;
-    argumentPointers.reserve(arguments.size());
-    for (const std::wstring& argument : arguments) {
-      argumentPointers.push_back(argument.c_str());
-    }
+    auto argumentPointers = arguments | std::views::transform([&](const std::wstring& argument) {
+      return argument.c_str();
+    }) |
+      std::ranges::to<std::vector<LPCWSTR>>();
 
     DxcBuffer source{};
     source.Ptr = hlsl.data();

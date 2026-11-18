@@ -15,6 +15,7 @@
 #include "editor/ui/EdHelp.h"
 #include "gpg/core/utils/Logging.h"
 
+#include <utility>
 #include <fstream>
 #include <iterator>
 #include <cmath>
@@ -22,6 +23,7 @@
 #include <cctype>
 #include <algorithm>
 #include <cstdio>
+#include <ranges>
 
 #include "imgui.h"
 
@@ -424,6 +426,80 @@ namespace faf::editor
     return picked;
   }
 
+  std::string EdTools::PackageHeightExtension(
+    const ExportPackage& p
+  )
+  {
+    if (p.format == 2) {
+      return p.float32 ? "r32" : "r16";
+    }
+    return p.format == 1 || p.float32 ? "tif" : "png";
+  }
+
+  std::string EdTools::PackageStem() const
+  {
+    if (mPackage.name[0] != '\0') {
+      return mPackage.name;
+    }
+    const std::size_t slash = mMapFolder.find_last_of("/\\");
+    const std::string folder = slash == std::string::npos ? mMapFolder : mMapFolder.substr(slash + 1);
+    return folder.empty() ? std::string("terrain") : folder;
+  }
+
+  std::vector<EdTools::PackageFile> EdTools::PackagePlan(
+    const ExportPackage& p,
+    const std::string& stem
+  )
+  {
+    std::vector<PackageFile> list;
+    const auto add = [&](const char* id, const std::string& suffix, const std::string& ext, const char* what) {
+      list.push_back({id, stem + suffix + "." + ext, what});
+    };
+    const std::string mext = p.format == 1 ? "tif" : "png";
+    if (p.height) {
+      add(
+        "height",
+        "_height",
+        PackageHeightExtension(p),
+        p.normalised ? "heightmap, 0..1 between the lowest and highest point" : "heightmap, absolute"
+      );
+    }
+    if (p.height || p.readme) {
+      add("json", "_height", "json", "range, size and scale of the heightmap");
+    }
+    if (p.water) {
+      add("water", "_water", mext, "water mask (1 under the water surface)");
+    }
+    if (p.slope) {
+      add("slope", "_slope", mext, "slope, 0..90 degrees as 0..1");
+    }
+    if (p.flow) {
+      add("flow", "_flow", mext, "drainage (where rivers run)");
+    }
+    if (p.wear) {
+      add("wear", "_wear", mext, "wear (convex ridges)");
+      add("deposit", "_deposit", mext, "deposit (concave basins)");
+    }
+    if (p.layers) {
+      add("layers", "_layerN", mext, "the painted texture layers, one image each");
+    }
+    if (p.types) {
+      add("types", "_terraintypes", "png", "terrain type codes (8-bit)");
+    }
+    if (p.markers) {
+      add("csv", "_markers", "csv", "all markers: name, type, x, y, z");
+      add("starts", "_starts", mext, "start positions as discs");
+      add("resources", "_resources", mext, "mass and hydrocarbon deposits as discs");
+    }
+    if (p.playable) {
+      add("playable", "_playable", mext, "the playable area");
+    }
+    if (p.readme) {
+      add("readme", "_README_scale", "txt", "the scale sheet for Gaea / World Machine");
+    }
+    return list;
+  }
+
   void EdTools::DrawSymmetryPicture(
     ImDrawList* const draw,
     const int mode,
@@ -647,15 +723,14 @@ namespace faf::editor
     if (image < 0 || image >= static_cast<int>(mBrushImages.size())) {
       return false;
     }
-    ShapeGrid grid;
-    std::string error;
-    if (!LoadBrushImage(mBrushImages[static_cast<std::size_t>(image)].path, kShapeGridSize, grid, error)) {
+    const auto grid = LoadBrushImage(mBrushImages[static_cast<std::size_t>(image)].path, kShapeGridSize);
+    if (!grid) {
       gpg::Warnf(
-        "editor: brush image %s: %s", mBrushImages[static_cast<std::size_t>(image)].name.c_str(), error.c_str()
+        "editor: brush image %s: %s", mBrushImages[static_cast<std::size_t>(image)].name.c_str(), grid.error().c_str()
       );
       return false;
     }
-    SetStamp(StampFromGrid(grid), mBrushImages[static_cast<std::size_t>(image)].name);
+    SetStamp(StampFromGrid(*grid), mBrushImages[static_cast<std::size_t>(image)].name);
     return true;
   }
 
@@ -666,17 +741,16 @@ namespace faf::editor
     if (index < 0 || index >= static_cast<int>(mBrushImages.size())) {
       return false;
     }
-    auto grid = std::make_shared<ShapeGrid>();
-    std::string error;
-    if (!LoadBrushImage(mBrushImages[static_cast<std::size_t>(index)].path, kShapeGridSize, *grid, error)) {
+    auto loaded = LoadBrushImage(mBrushImages[static_cast<std::size_t>(index)].path, kShapeGridSize);
+    if (!loaded) {
       gpg::Warnf(
-        "editor: brush image %s: %s", mBrushImages[static_cast<std::size_t>(index)].name.c_str(), error.c_str()
+        "editor: brush image %s: %s", mBrushImages[static_cast<std::size_t>(index)].name.c_str(), loaded.error().c_str()
       );
       return false;
     }
-    mShapeImage = std::move(grid);
+    mShapeImage = std::make_shared<ShapeGrid>(std::move(*loaded));
     mShapeImageName = mBrushImages[static_cast<std::size_t>(index)].name;
-    mBrushShape = static_cast<int>(BrushShape::Image);
+    mBrushShape = std::to_underlying(BrushShape::Image);
     return true;
   }
 
@@ -790,7 +864,7 @@ namespace faf::editor
         }
         if (!mConvertPlan.lost.empty()) {
           static const char* const kLost[] = {"Move to a free layer", "Merge into a layer", "Drop"};
-          int lost = static_cast<int>(mConvertOptions.lost);
+          int lost = std::to_underlying(mConvertOptions.lost);
           ImGui::SetNextItemWidth(Em(240.0f));
           if (EdCombo("Paint it can't draw", &lost, kLost, 3)) {
             mConvertOptions.lost = static_cast<LostLayers>(lost);
@@ -835,7 +909,7 @@ namespace faf::editor
   {
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
     ImGui::SetNextItemWidth(half);
-    const bool image = mBrushShape == static_cast<int>(BrushShape::Image);
+    const bool image = mBrushShape == std::to_underlying(BrushShape::Image);
     if (
       EdBeginCombo(
         "##brushshape", image ? mShapeImageName.c_str() : BrushShapeName(static_cast<BrushShape>(mBrushShape))
@@ -927,7 +1001,7 @@ namespace faf::editor
     const std::string& text
   )
   {
-    if (text.find("textureStar=") != std::string::npos || text.find("textureRecent=") != std::string::npos) {
+    if (text.contains("textureStar=") || text.contains("textureRecent=")) {
       mStarredTextures.clear();
       mRecentTextures.clear();
     }
@@ -963,7 +1037,7 @@ namespace faf::editor
         mBrowseList = whole != 0;
         continue;
       }
-      if (key.rfind("brush.", 0) == 0) {
+      if (key.starts_with("brush.")) {
         float r = 0.0f, s = 0.0f, f = 0.0f;
         if (std::sscanf(value, "%f,%f,%f", &r, &s, &f) == 3) {
           mBrushByMode[std::atoi(key.c_str() + 6)] = {
@@ -1365,11 +1439,11 @@ namespace faf::editor
     if (values.empty()) {
       values = ErosionDefaults(*solver);
     }
-    if (
-      ImGui::BeginChild(
-        "##erosionsettings", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing() * 8.4f), ImGuiChildFlags_Borders
-      )
-    ) {
+    // The rest of the window less the masks and buttons below, but never fewer than five settings: a short window
+    // left the list no height at all (the window scrolls instead).
+    const float row = ImGui::GetFrameHeightWithSpacing();
+    const float settingsHeight = std::max(ImGui::GetContentRegionAvail().y - row * 8.4f, row * 5.0f);
+    if (ImGui::BeginChild("##erosionsettings", ImVec2(0.0f, settingsHeight), ImGuiChildFlags_Borders)) {
       for (const ErosionParam& param : solver->params) {
         float value = static_cast<float>(values[param.key]);
         char format[96];
@@ -1691,7 +1765,7 @@ namespace faf::editor
       static constexpr const char* kMappings[] = {
         "Values: stretched over a height range", "Values: heights (1/128 unit a step)"
       };
-      int mapping = static_cast<int>(s.mapping);
+      int mapping = std::to_underlying(s.mapping);
       ImGui::SetNextItemWidth(-1.0f);
       if (EdCombo("##interopmapping", &mapping, kMappings, IM_ARRAYSIZE(kMappings))) {
         s.mapping = static_cast<ImportSettings::Mapping>(mapping);
@@ -1786,13 +1860,12 @@ namespace faf::editor
           const std::string sidecar = std::string(mInteropImportPath) + ".json";
           std::ifstream in(sidecar, std::ios::binary);
           const std::string json((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-          std::string error;
           if (json.empty()) {
             mInteropStatus = "No " + sidecar + " beside the image.";
-          } else if (ImportFromSidecar(json, s, error)) {
+          } else if (const auto read = ImportFromSidecar(json, s)) {
             mInteropStatus = "Settings from the export's .json: heights as written (absolute).";
           } else {
-            mInteropStatus = "The .json: " + error;
+            mInteropStatus = "The .json: " + read.error();
           }
         }
         ImGui::TreePop();
@@ -1808,7 +1881,7 @@ namespace faf::editor
       static constexpr const char* kBlends[] = {
         "Replace the heights", "Add to the heights", "Keep the higher", "Keep the lower"
       };
-      int blend = static_cast<int>(s.blend);
+      int blend = std::to_underlying(s.blend);
       ImGui::SetNextItemWidth(-1.0f);
       if (EdCombo("##interopblend", &blend, kBlends, IM_ARRAYSIZE(kBlends))) {
         s.blend = static_cast<ImportSettings::Blend>(blend);
@@ -1819,7 +1892,7 @@ namespace faf::editor
         static constexpr const char* kFilters[] = {
           "Read between samples: bilinear", "Nearest sample", "Bicubic (sharper)", "Lanczos 3 (sharpest)"
         };
-        int filter = static_cast<int>(s.filter);
+        int filter = std::to_underlying(s.filter);
         ImGui::SetNextItemWidth(-1.0f);
         if (EdCombo("##interopfilter", &filter, kFilters, IM_ARRAYSIZE(kFilters))) {
           s.filter = static_cast<ResampleFilter>(filter);
@@ -1952,7 +2025,7 @@ namespace faf::editor
         MaskImportFile& f = mi.files[i];
         ImGui::PushID(static_cast<int>(i));
         ImGui::TextUnformatted(std::filesystem::path(f.path).filename().string().c_str());
-        int target = static_cast<int>(f.target);
+        int target = std::to_underlying(f.target);
         ImGui::SetNextItemWidth(Em(150.0f));
         if (EdCombo("##target", &target, kTargets, 4)) {
           f.target = static_cast<MaskImportFile::Target>(target);
@@ -2006,6 +2079,9 @@ namespace faf::editor
       ExportPackage& p = mPackage;
       ImGui::SetNextItemWidth(-1.0f);
       ImGui::InputTextWithHint("##pkgfolder", "folder for the package", p.folder, sizeof(p.folder));
+      ImGui::SetNextItemWidth(-1.0f);
+      ImGui::InputTextWithHint("##pkgname", "file name (empty = the map name)", p.name, sizeof(p.name));
+      EdSetItemTooltip("Every file starts with it: <name>_height.png, <name>_water.png, ...");
       ImGui::Checkbox("Heights##pkg", &p.height);
       ImGui::SameLine();
       ImGui::Checkbox("Water##pkg", &p.water);
@@ -2032,9 +2108,23 @@ namespace faf::editor
           ImGui::DragFloatRange2("##pkgrange", &p.low, &p.high, 0.5f, 0.0f, 512.0f, "%.0f", "%.0f");
         }
       }
-      ImGui::Checkbox("32-bit float heights (.r32)", &p.float32);
+      ImGui::TextUnformatted("Format");
+      ImGui::SameLine();
+      ImGui::RadioButton("PNG##pkgfmt", &p.format, 0);
+      ImGui::SameLine();
+      ImGui::RadioButton("TIFF##pkgfmt", &p.format, 1);
+      ImGui::SameLine();
+      ImGui::RadioButton("Raw##pkgfmt", &p.format, 2);
+      ImGui::Checkbox("32-bit float heights", &p.float32);
+      EdSetItemTooltip("A 32-bit float TIFF (or .r32 when raw) instead of 16-bit words");
       ImGui::SameLine();
       ImGui::Checkbox("8-bit masks", &p.mask8);
+      ImGui::SetNextItemWidth(-1.0f);
+      FillSliderFloat("##pkgwatersoft", &p.waterSoft, 0.0f, 20.0f, "Water mask soft edge (units) %.1f");
+      EdSetItemTooltip("The water mask goes from 0 to 1 over this height around the water level (0: a hard edge)");
+      ImGui::SetNextItemWidth(-1.0f);
+      FillSliderFloat("##pkgmarkerradius", &p.markerRadius, 0.0f, 20.0f, "Marker disc radius (samples) %.0f");
+      EdSetItemTooltip("The discs of the start positions and the resources");
       ImGui::BeginDisabled(p.folder[0] == '\0');
       if (PrimaryButton("Export the package")) {
         mPackageAsk = true;
@@ -2048,6 +2138,11 @@ namespace faf::editor
         ImGui::SameLine();
         ImGui::SetNextItemWidth(Em(100.0f));
         FillSliderFloat("##pkginterval", &p.interval, 0.5f, 30.0f, "every %.1f s");
+      }
+      ImGui::TextDisabled("Files that will be written:");
+      for (const PackageFile& file : PackagePlan(p, PackageStem())) {
+        ImGui::BulletText("%s", file.file.c_str());
+        EdSetItemTooltip("%s", file.what.c_str());
       }
     }
     if (!mInteropStatus.empty()) {
@@ -3182,7 +3277,7 @@ namespace faf::editor
             for (char& c : key) {
               c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             }
-            if (!filter.empty() && key.find(filter) == std::string::npos) {
+            if (!filter.empty() && !key.contains(filter)) {
               continue;
             }
             ImGui::PushID(type.code);
@@ -3398,9 +3493,7 @@ namespace faf::editor
           for (char& c : key) {
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
           }
-          if (
-            (!filter.empty() && key.find(filter) == std::string::npos) || (mBrowseNormals && texture->normals.empty())
-          ) {
+          if ((!filter.empty() && !key.contains(filter)) || (mBrowseNormals && texture->normals.empty())) {
             continue;
           }
           shownList.push_back(texture);
@@ -3830,10 +3923,10 @@ namespace faf::editor
       ImGui::TextDisabled("No themes.");
     } else {
       mStrataIndex = std::clamp(mStrataIndex, 0, static_cast<int>(mStrataLabels.size()) - 1);
-      std::vector<const char*> names;
-      for (const std::string& label : mStrataLabels) {
-        names.push_back(label.c_str());
-      }
+      auto names = mStrataLabels | std::views::transform([&](const std::string& label) {
+        return label.c_str();
+      }) |
+        std::ranges::to<std::vector<const char*>>();
       ImGui::BeginDisabled(mThemeTrying);
       ImGui::SetNextItemWidth(-1.0f);
       (void)EdCombo("##strata", &mStrataIndex, names.data(), static_cast<int>(names.size()));
@@ -4571,7 +4664,7 @@ namespace faf::editor
         return i < mBodyReport.size() ? mBodyReport[i] : std::string();
       };
       const auto skipped = [](const std::string& line) {
-        return line.find("skipped") != std::string::npos || line.find("can't") != std::string::npos;
+        return line.contains("skipped") || line.contains("can't");
       };
 
       // The list: each body, what the fill made of it.
@@ -4821,7 +4914,7 @@ namespace faf::editor
         // Each prop with a picture of its model (only the rows in view ask for theirs).
         const float picture = ImGui::GetFrameHeight() * 1.8f;
         for (const std::string& blueprint : mPropBlueprints) {
-          if (!filter.empty() && blueprint.find(filter) == std::string::npos) {
+          if (!filter.empty() && !blueprint.contains(filter)) {
             continue;
           }
           // "/env/evergreen/props/trees/pine06_s1_prop.bp" shows as "trees/pine06_s1".
@@ -4829,7 +4922,7 @@ namespace faf::editor
           if (const std::size_t props = label.find("/props/"); props != std::string::npos) {
             label = label.substr(props + 7);
           }
-          if (label.size() > 8 && label.compare(label.size() - 8, 8, "_prop.bp") == 0) {
+          if (label.size() > 8 && label.ends_with("_prop.bp")) {
             label.resize(label.size() - 8);
           }
           ImGui::PushID(blueprint.c_str());
@@ -4904,7 +4997,7 @@ namespace faf::editor
           if (const std::size_t props = label.find("/props/"); props != std::string::npos) {
             label = label.substr(props + 7);
           }
-          if (label.size() > 8 && label.compare(label.size() - 8, 8, "_prop.bp") == 0) {
+          if (label.size() > 8 && label.ends_with("_prop.bp")) {
             label.resize(label.size() - 8);
           }
           ImGui::TextUnformatted(label.c_str());
@@ -5091,7 +5184,7 @@ namespace faf::editor
         }
         const std::size_t slash = lower.find_last_of('/');
         const std::string leaf = slash == std::string::npos ? lower : lower.substr(slash + 1);
-        if (filter.empty() ? leaf.find(kHints[slot]) == std::string::npos : lower.find(filter) == std::string::npos) {
+        if (filter.empty() ? !leaf.contains(kHints[slot]) : !lower.contains(filter)) {
           continue;
         }
         if (shown % columns != 0) {
@@ -5236,7 +5329,7 @@ namespace faf::editor
           for (char& c : lowerPath) {
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
           }
-          if (!filter.empty() && lowerPath.find(filter) == std::string::npos) {
+          if (!filter.empty() && !lowerPath.contains(filter)) {
             continue;
           }
           if (column > 0) {
@@ -5413,7 +5506,7 @@ namespace faf::editor
           for (char& c : lower) {
             c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
           }
-          if (!filter.empty() && lower.find(filter) == std::string::npos) {
+          if (!filter.empty() && !lower.contains(filter)) {
             continue;
           }
           ImGui::PushID(id.c_str());

@@ -48,6 +48,7 @@ set(FAF_ENGINE_SOURCES
   gpg/gal/backends/d3d9/StateManagerD3D9.cpp
   legacy/containers/Map.cpp
   legacy/containers/Set.cpp
+  legacy/containers/SlabAllocator.cpp
   legacy/containers/String.cpp
   legacy/exceptions/StdExcept.cpp
   legacy/math/Libm.cpp
@@ -79,6 +80,7 @@ set(FAF_ENGINE_SOURCES
   gpg/gal/backends/d3d11/EffectSourceD3D11.cpp
   gpg/gal/backends/d3d11/GpuDrivenD3D11.cpp
   gpg/gal/backends/common/BackendErrors.cpp
+  gpg/gal/backends/common/BlockCompression.cpp
   gpg/gal/backends/dxgi/DxgiFormats.cpp
   gpg/gal/effects/EffectText.cpp
   gpg/gal/effects/EffectDescription.cpp
@@ -237,6 +239,8 @@ set(FAF_ENGINE_SOURCES
   moho/net/Common.cpp
   platform/windows/NetWindows.cpp
   moho/net/NetConVars.cpp
+  moho/net/LagControl.cpp
+  moho/net/NetGameChannel.cpp
   moho/net/NetPeerTransport.cpp
   moho/net/NetlinkPeers.cpp
   moho/net/IClient.cpp
@@ -340,6 +344,7 @@ set(FAF_ENGINE_SOURCES
   moho/terrain/water/WaterBodySurfaces.cpp
   moho/ui/CUIWorldView.cpp
   moho/ui/CUIManager.cpp
+  moho/ui/UiDisplayScale.cpp
   moho/lua/SCR_Math.cpp
   moho/lua/SCR_String.cpp
   moho/audio/AudioEngine.cpp

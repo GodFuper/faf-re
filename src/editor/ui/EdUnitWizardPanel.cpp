@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -32,8 +33,8 @@ namespace faf::editor
       const std::string& text = EmbeddedEditorData("unitwizdata.lua");
       if (text.empty()) {
         mDataError = "the wizard's template data isn't in this build";
-      } else if (!LoadUnitWizardData(text, mData, mDataError)) {
-        mDataError = "the wizard's template data can't be read: " + mDataError;
+      } else if (const auto loaded = LoadUnitWizardData(text, mData); !loaded) {
+        mDataError = "the wizard's template data can't be read: " + loaded.error();
       }
       if (!mDataError.empty()) {
         gpg::Warnf("editor: unit wizard: %s", mDataError.c_str());
@@ -54,9 +55,10 @@ namespace faf::editor
       return;
     }
     const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    std::string error;
-    if (!ReadUnitSpecs(text, mSpecs, error)) {
-      gpg::Warnf("editor: unit wizard: editor_newunits.json: %s", error.c_str());
+    if (auto read = ReadUnitSpecs(text)) {
+      mSpecs = std::move(*read);
+    } else {
+      gpg::Warnf("editor: unit wizard: editor_newunits.json: %s", read.error().c_str());
     }
     mCurrent = mSpecs.empty() ? -1 : 0;
   }
@@ -79,7 +81,7 @@ namespace faf::editor
     if (gameHasUnit && gameHasUnit(id)) {
       return true;
     }
-    if (const ModProject* p = const_cast<EdModPanel&>(mProject).Project(); p != nullptr && p->derived.count(id) != 0) {
+    if (const ModProject* p = const_cast<EdModPanel&>(mProject).Project(); p != nullptr && p->derived.contains(id)) {
       return true;
     }
     return std::any_of(mSpecs.begin(), mSpecs.end(), [&id](const UnitWizardSpec& s) {
@@ -101,14 +103,14 @@ namespace faf::editor
     if (mFolder != mProject.Folder().string()) {
       LoadSpecs();
     }
-    UnitWizardSpec spec;
-    std::string error;
     const std::string id = SuggestUnitId(templateId, faction, [this](const std::string& i) {
       return Taken(i);
     });
-    if (!NewUnitSpec(mData, templateId, faction, id, spec, error)) {
-      return error;
+    const auto made = NewUnitSpec(mData, templateId, faction, id);
+    if (!made) {
+      return made.error();
     }
+    const UnitWizardSpec& spec = *made;
     mSpecs.push_back(spec);
     SaveSpecs();
     std::vector<std::string> report;
@@ -176,15 +178,13 @@ namespace faf::editor
         const std::string id = SuggestUnitId(t.id, faction, [this](const std::string& i) {
           return Taken(i);
         });
-        UnitWizardSpec spec;
-        std::string error;
-        if (NewUnitSpec(mData, t.id, faction, id, spec, error)) {
-          mSpecs.push_back(std::move(spec));
+        if (auto spec = NewUnitSpec(mData, t.id, faction, id)) {
+          mSpecs.push_back(std::move(*spec));
           mCurrent = static_cast<int>(mSpecs.size()) - 1;
           SaveSpecs();
           mReport = {"made " + id + " (" + t.label + ", " + faction + "): set it up, then Write"};
         } else {
-          mReport = {error};
+          mReport = {spec.error()};
         }
       }
     }
@@ -234,15 +234,13 @@ namespace faf::editor
       if (ImGui::Button("Check mesh")) {
         // The mesh as Write would build it: its size and anything wrong with it (FAF Studio's Check mesh).
         std::string objText;
-        std::string error;
         if (!spec.mesh.source.empty()) {
           std::ifstream in(spec.mesh.source, std::ios::binary);
           objText.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
         }
         UnitMeshInfo info;
-        const std::vector<std::uint8_t> mesh = UnitMesh(mData, spec, objText, info, error);
-        if (mesh.empty()) {
-          mReport = {"mesh: " + error};
+        if (const auto mesh = UnitMesh(mData, spec, objText, info); !mesh) {
+          mReport = {"mesh: " + mesh.error()};
         } else {
           const std::array<float, 3> dims = UnitDims(mData, spec, info.bounds);
           char line[256];
@@ -266,13 +264,13 @@ namespace faf::editor
       // Fix (FAF Studio's): what Write mends (missing files, the script's weapons, the icon), and no builder: the
       // template's builders.
       const bool fixable = std::any_of(mChecks.begin(), mChecks.end(), [](const UnitCheck& c) {
-        return c.text.find("Write") != std::string::npos || c.text.find("nothing can build") != std::string::npos;
+        return c.text.contains("Write") || c.text.contains("nothing can build");
       });
       if (fixable) {
         ImGui::SameLine();
         if (ImGui::Button("Fix")) {
           if (std::any_of(mChecks.begin(), mChecks.end(), [](const UnitCheck& c) {
-            return c.text.find("nothing can build") != std::string::npos;
+            return c.text.contains("nothing can build");
           })) {
             if (const UnitTemplate* t = UnitTemplateOf(spec.templateId); t != nullptr) {
               spec.buildBy = DefaultBuildBy(*t, spec.tech);
@@ -373,7 +371,7 @@ namespace faf::editor
                           const float hi,
                           const char* format
                         ) {
-      float v = static_cast<float>(map.count(key) != 0 ? map[key] : 0.0);
+      float v = static_cast<float>(map.contains(key) ? map[key] : 0.0);
       ImGui::SetNextItemWidth(-1.0f);
       if (FillDragFloat(id, &v, (hi - lo) / 400.0f, lo, hi, format)) {
         map[key] = v;
@@ -384,13 +382,12 @@ namespace faf::editor
       std::string id = spec.id;
       text("##id", "unit id (zel0001)", id);
       if (id != spec.id) {
-        std::string why;
-        if (CheckUnitId(id, [this, &spec](const std::string& i) {
+        if (const auto checked = CheckUnitId(id, [this, &spec](const std::string& i) {
           return i != spec.id && Taken(i);
-        }, why)) {
+        })) {
           spec.id = id;
         } else {
-          ImGui::TextDisabled("%s", why.c_str());
+          ImGui::TextDisabled("%s", checked.error().c_str());
         }
       }
       text("##name", "name", spec.name);
@@ -592,10 +589,10 @@ namespace faf::editor
         mDirty = true;
       }
       if (const UnitTemplate* t = UnitTemplateOf(spec.templateId); t != nullptr && !t->kinds.empty()) {
-        std::vector<const char*> names;
-        for (const char* k : t->kinds) {
-          names.push_back(UnitWeaponKindName(k));
-        }
+        auto names = t->kinds | std::views::transform([&](const char* k) {
+          return UnitWeaponKindName(k);
+        }) |
+          std::ranges::to<std::vector<const char*>>();
         mNewWeaponKind = std::clamp(mNewWeaponKind, 0, static_cast<int>(names.size()) - 1);
         ImGui::SetNextItemWidth(Em(160.0f));
         (void)EdCombo("##newweapon", &mNewWeaponKind, names.data(), static_cast<int>(names.size()));

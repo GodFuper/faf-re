@@ -202,12 +202,12 @@ namespace faf::editor
         }
       }
     }
-    if (name.find("splat") != std::string::npos) {
+    if (name.contains("splat")) {
       f.target = MaskImportFile::Target::Splat;
       f.layer = 1;
       return f;
     }
-    if (name.find("type") != std::string::npos) {
+    if (name.contains("type")) {
       f.target = MaskImportFile::Target::TerrainType;
       return f;
     }
@@ -229,7 +229,7 @@ namespace faf::editor
       {"ice", "snow"},
     };
     for (const auto& [word, kind] : kWords) {
-      if (name.find(word) == std::string::npos) {
+      if (!name.contains(word)) {
         continue;
       }
       for (int layer = 1; layer <= 8; ++layer) {
@@ -244,20 +244,19 @@ namespace faf::editor
     return f;
   }
 
-  bool ImportFromSidecar(
+  std::expected<void, std::string> ImportFromSidecar(
     const std::string& json,
-    ImportSettings& settings,
-    std::string& error
+    ImportSettings& settings
   )
   {
-    JsonTree root;
-    if (!ParseJsonTree(json, root, error)) {
-      return false;
+    const auto parsed = ParseJsonTree(json);
+    if (!parsed) {
+      return std::unexpected(parsed.error());
     }
+    const JsonTree& root = *parsed;
     const double perWord = root.Num("heightPerWord", 0.0);
     if (perWord <= 0.0) {
-      error = "it has no heightPerWord (not one of the editor's exports)";
-      return false;
+      return std::unexpected("it has no heightPerWord (not one of the editor's exports)");
     }
     settings.mapping = ImportSettings::Mapping::Absolute;
     settings.scale = static_cast<float>(perWord * 128.0);
@@ -265,7 +264,7 @@ namespace faf::editor
     settings.seaPin = false;
     settings.low = static_cast<float>(root.Num("lowest", settings.low));
     settings.high = static_cast<float>(root.Num("highest", settings.high));
-    return true;
+    return {};
   }
 
   std::string ExportSheet(
@@ -459,7 +458,7 @@ namespace faf::editor
       if (stem == wanted) {
         return file;
       }
-      if (stem.size() > wanted.size() && stem.compare(stem.size() - wanted.size(), wanted.size(), wanted) == 0) {
+      if (stem.size() > wanted.size() && stem.ends_with(wanted)) {
         const char before = stem[stem.size() - wanted.size() - 1];
         if (before == '_' || before == '-' || before == ' ' || before == '.') {
           return file;

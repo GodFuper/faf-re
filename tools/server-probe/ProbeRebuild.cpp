@@ -2,6 +2,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <print>
 #include <sstream>
 #include <vector>
 
@@ -71,12 +72,10 @@ namespace faf::probe
   CProbeRebuild::CProbeRebuild() = default;
   CProbeRebuild::~CProbeRebuild() = default;
 
-  bool CProbeRebuild::Start(
-    std::string& error
-  )
+  std::expected<void, std::string> CProbeRebuild::Start()
   {
     if (mState) {
-      return true;
+      return {};
     }
     // `WinMain` / `CScApp::Init` without a window, as the server does.
     moho::APP_InitializeIdentity();
@@ -84,21 +83,19 @@ namespace faf::probe
     (void)SetSse2Mode(0);
     mState = std::make_unique<SState>();
     if (!mState->app.Init()) {
-      error = "the engine's services didn't start";
-      return false;
+      return std::unexpected("the engine's services didn't start");
     }
     moho::USER_LoadPreferences(fa::string("Game.prefs"));
-    return true;
+    return {};
   }
 
-  bool CProbeRebuild::OnLaunchInfo(
+  std::expected<void, std::string> CProbeRebuild::OnLaunchInfo(
     const std::span<const std::uint8_t> configuration,
-    const int uid,
-    std::string& error
+    const int uid
   )
   {
     if (!mState || mState->rules) {
-      return true; // not asked to rebuild from it, or the rules are loaded already (a reconnect sends it again)
+      return {}; // not asked to rebuild from it, or the rules are loaded already (a reconnect sends it again)
     }
     // As `CLobby::OnScriptData` reads script data: the lobby's Lua byte form.
     LuaPlus::LuaState* const state = faf::headless::ReplayLuaState();
@@ -111,28 +108,25 @@ namespace faf::probe
       LuaPlus::LuaObject codec = state->GetGlobals();
       codec.SCR_FromByteStream(config, state, &reader);
     } catch (const std::exception& exception) {
-      error = std::string("the launch info doesn't read: ") + exception.what();
-      return false;
+      return std::unexpected(std::string("the launch info doesn't read: ") + exception.what());
     }
     if (!config.IsTable()) {
-      error = "the launch info isn't a table";
-      return false;
+      return std::unexpected("the launch info isn't a table");
     }
     // A client with no sim needs only the rules from it: the server's own observer entry (uid 0) is left out.
     LuaPlus::LuaObject noObservers;
     noObservers.AssignNewTable(state, 0, 0u);
     config.SetObject("Observers", noObservers);
-    return LoadRules(config, uid, error);
+    return LoadRules(config, uid);
   }
 
-  bool CProbeRebuild::Load(
+  std::expected<void, std::string> CProbeRebuild::Load(
     const std::string& matchPath,
-    const int uid,
-    std::string& error
+    const int uid
   )
   {
-    if (!Start(error)) {
-      return false;
+    if (auto started = Start(); !started) {
+      return started;
     }
 
     // The match, as the server reads it (`MatchConfig`, `MatchSeed`); a client will get it from the server (WPR.55).
@@ -141,21 +135,18 @@ namespace faf::probe
     std::stringstream text;
     text << file.rdbuf();
     if (!file || !moho::SCR_LuaDoString(text.str().c_str(), state)) {
-      error = "cannot run " + matchPath;
-      return false;
+      return std::unexpected("cannot run " + matchPath);
     }
     LuaPlus::LuaObject config = state->GetGlobal("MatchConfig");
     if (!config.IsTable()) {
-      error = matchPath + " sets no MatchConfig";
-      return false;
+      return std::unexpected(matchPath + " sets no MatchConfig");
     }
-    return LoadRules(config, uid, error);
+    return LoadRules(config, uid);
   }
 
-  bool CProbeRebuild::LoadRules(
+  std::expected<void, std::string> CProbeRebuild::LoadRules(
     LuaPlus::LuaObject& config,
-    const int uid,
-    std::string& error
+    const int uid
   )
   {
     LuaPlus::LuaState* const state = faf::headless::ReplayLuaState();
@@ -164,16 +155,15 @@ namespace faf::probe
     // The seed is the sim's; a client with no sim needs none.
     moho::SLaunchBuild build = moho::BuildLaunchInfo(config, roster, 1, true, state);
     if (build.failure != nullptr) {
-      error = std::string("the match can't launch: ") + build.failure;
-      return false;
+      return std::unexpected(std::string("the match can't launch: ") + build.failure);
     }
     moho::SWldSessionInfo sessionInfo{}; // value-initialised: `LoadSessionScenario` beats a non-null client manager
     sessionInfo.mClientManager = nullptr;
     sessionInfo.mMapName = build.mapName;
     sessionInfo.mLaunchInfo = std::static_pointer_cast<moho::LaunchInfoBase>(build.launchInfo);
     moho::SWldGameData gameData{};
-    if (!faf::headless::LoadSessionScenario(sessionInfo, gameData, error)) {
-      return false;
+    if (auto loaded = faf::headless::LoadSessionScenario(sessionInfo, gameData); !loaded) {
+      return loaded;
     }
     moho::FAF_BeginSession(false);
     mState->sessionState.reset(gameData.mState);
@@ -181,7 +171,7 @@ namespace faf::probe
     mState->map.reset(gameData.mWldMap);
     mState->gameMods.assign(build.launchInfo->mGameMods.c_str(), build.launchInfo->mGameMods.size());
     gameData = moho::SWldGameData{};
-    return true;
+    return {};
   }
 
   bool CProbeRebuild::Content(
@@ -287,7 +277,7 @@ namespace faf::probe
   ) const
   {
     if (!mState || !mState->client) {
-      std::printf("probe %d: rebuild: never started (no rules or no game info)\n", uid);
+      std::println("probe {}: rebuild: never started (no rules or no game info)", uid);
       return;
     }
     const remote::client::CServerViewClient& client = *mState->client;
@@ -296,10 +286,10 @@ namespace faf::probe
     {
       // Plan WP5.14: the command-records lane as the game client's view client applied it.
       const remote::wire::SCommandLaneCounts& c = client.Commands().Counts();
-      std::printf(
-        "probe %d: rebuild: commands: %llu lanes (%llu didn't decode), %llu descriptors (%llu naming a blueprint not "
-        "held), %llu updates, %llu removals, %llu releases; dropped %llu updates and %llu removals of commands not "
-        "sent; %zu held at the end\n",
+      std::println(
+        "probe {}: rebuild: commands: {} lanes ({} didn't decode), {} descriptors ({} naming a blueprint not held), {} "
+        "updates, {} removals, {} releases; dropped {} updates and {} removals of commands not sent; {} held at the "
+        "end",
         uid,
         static_cast<unsigned long long>(c.lanes),
         static_cast<unsigned long long>(c.failures),
@@ -317,11 +307,10 @@ namespace faf::probe
       // Plan WP9.3: the effects lane as the game client's view client applied it.
       using remote::client::EEffectSkip;
       const remote::client::SEffectApplyCounts& e = client.Effects().Total();
-      std::printf(
-        "probe %d: rebuild: effects: %llu ops, %llu applied (%llu created, %llu replacing one held, %llu setters, %llu "
-        "lights, %llu destroyed by script), dropped %llu with their entity, %llu at a whole view, %llu aged out; "
-        "skipped: entity not held %llu, unknown effect %llu, name not sent %llu, blueprint not held %llu; %llu lanes "
-        "didn't decode; %zu held at the end\n",
+      std::println(
+        "probe {}: rebuild: effects: {} ops, {} applied ({} created, {} replacing one held, {} setters, {} lights, {} "
+        "destroyed by script), dropped {} with their entity, {} at a whole view, {} aged out; skipped: entity not held "
+        "{}, unknown effect {}, name not sent {}, blueprint not held {}; {} lanes didn't decode; {} held at the end",
         uid,
         static_cast<unsigned long long>(e.ops),
         static_cast<unsigned long long>(e.applied),
@@ -343,10 +332,10 @@ namespace faf::probe
       if (const remote::client::CClientEffects* const hosted = client.Hosted(); hosted != nullptr) {
         // Plan WP9.3: what the hosted effects drew under the camera that sees everything.
         const remote::client::SHostedEffectCounts& h = hosted->Counts();
-        std::printf(
-          "probe %d: rebuild: hosted effects: %llu beats, %llu made (%llu not), %llu ended by themselves, %zu alive at "
-          "the end (most %llu), %zu entities followed (most %llu); drawn: %llu particles (%llu beats with any, most "
-          "%llu in one), %llu trail segments, %llu beams, %llu lights\n",
+        std::println(
+          "probe {}: rebuild: hosted effects: {} beats, {} made ({} not), {} ended by themselves, {} alive at the end "
+          "(most {}), {} entities followed (most {}); drawn: {} particles ({} beats with any, most {} in one), {} "
+          "trail segments, {} beams, {} lights",
           uid,
           static_cast<unsigned long long>(h.beats),
           static_cast<unsigned long long>(h.created),
@@ -370,9 +359,8 @@ namespace faf::probe
       slots += " army " + std::to_string(slot.army) + (slot.kind == 0 ? " vision " : " water ") +
         std::to_string(slot.bits.width) + "x" + std::to_string(slot.bits.height);
     }
-    std::printf(
-      "probe %d: rebuild: army lanes %llu (%llu failed), %zu armies held; grid lanes %llu (%llu failed), %zu grids "
-      "held:%s\n",
+    std::println(
+      "probe {}: rebuild: army lanes {} ({} failed), {} armies held; grid lanes {} ({} failed), {} grids held:{}",
       uid,
       static_cast<unsigned long long>(v.armyLanes),
       static_cast<unsigned long long>(v.armyFailures),
@@ -380,7 +368,7 @@ namespace faf::probe
       static_cast<unsigned long long>(v.gridLanes),
       static_cast<unsigned long long>(v.gridFailures),
       client.Grids().size(),
-      slots.c_str()
+      slots
     );
     std::uint64_t records = 0;
     std::uint64_t units = 0;
@@ -392,18 +380,17 @@ namespace faf::probe
         orphaned += (record.flags & remote::kEntityFlagOrphaned) != 0u ? 1u : 0u;
       }
     }
-    std::printf(
-      "probe %d: rebuild: last frame %llu records: %llu units, %llu orphaned; %llu own blips left out\n",
+    std::println(
+      "probe {}: rebuild: last frame {} records: {} units, {} orphaned; {} own blips left out",
       uid,
       static_cast<unsigned long long>(records),
       static_cast<unsigned long long>(units),
       static_cast<unsigned long long>(orphaned),
       static_cast<unsigned long long>(client.BlipsLeftOut())
     );
-    std::printf(
-      "probe %d: rebuild: %llu frames, %llu applied, %llu failed; %llu blueprints known; created %llu, updates %llu, "
-      "erased %llu, "
-      "deleted %llu; no blueprint %llu, unknown table ids %llu, unit updates %llu\n",
+    std::println(
+      "probe {}: rebuild: {} frames, {} applied, {} failed; {} blueprints known; created {}, updates {}, erased {}, "
+      "deleted {}; no blueprint {}, unknown table ids {}, unit updates {}",
       uid,
       static_cast<unsigned long long>(v.views),
       static_cast<unsigned long long>(v.applied),
@@ -418,10 +405,9 @@ namespace faf::probe
       static_cast<unsigned long long>(s.unitUpdates)
     );
     const remote::wire::CSessionTableReaders& tables = client.Tables();
-    std::printf(
-      "probe %d: rebuild: session tables %llu records (%llu bad, %llu resets): %u sounds, %u names, %zu deposits, %llu "
-      "terrain edits "
-      "(%s); unit stat items applied %llu\n",
+    std::println(
+      "probe {}: rebuild: session tables {} records ({} bad, {} resets): {} sounds, {} names, {} deposits, {} terrain "
+      "edits ({}); unit stat items applied {}",
       uid,
       static_cast<unsigned long long>(v.tableRecords),
       static_cast<unsigned long long>(v.tableFailures + mState->tablesBad),
@@ -433,10 +419,9 @@ namespace faf::probe
       mState->seeded ? "applied to the map's heights" : "counted, no heights",
       static_cast<unsigned long long>(s.statsApplied)
     );
-    std::printf(
-      "probe %d: rebuild: poses: %llu lanes (%llu bad, %llu KB), %llu poses made, %llu unit-beats with bones, %llu "
-      "bones applied, "
-      "%llu bad, %llu without a mesh\n",
+    std::println(
+      "probe {}: rebuild: poses: {} lanes ({} bad, {} KB), {} poses made, {} unit-beats with bones, {} bones applied, "
+      "{} bad, {} without a mesh",
       uid,
       static_cast<unsigned long long>(v.poseLanes),
       static_cast<unsigned long long>(v.poseFailures),

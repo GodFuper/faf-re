@@ -105,28 +105,26 @@ namespace faf::editor
       ) {
         mapWideDone = true;
         const std::string what = value[0].c_str();
-        const int kind = what.rfind("lighting", 0) == 0 ? 1
-          : what.rfind("specular", 0) == 0              ? 2
-          : what.rfind("macro", 0) == 0                 ? 3
-                                                        : 0;
+        const int kind = what.starts_with("lighting") ? 1
+          : what.starts_with("specular")              ? 2
+          : what.starts_with("macro")                 ? 3
+                                                      : 0;
         const auto fileAfter = [&](const char* const key) {
           const std::size_t at = what.find(key);
           return at == std::string::npos ? std::string() : what.substr(at + std::string(key).size());
         };
         if (const std::string out = fileAfter(",export="); !out.empty()) {
           mTools.AskMapTexture(
-            kind,
-            what.find(",make,") != std::string::npos ? EdTools::MapTextureOp::Make : EdTools::MapTextureOp::Export,
-            out
+            kind, what.contains(",make,") ? EdTools::MapTextureOp::Make : EdTools::MapTextureOp::Export, out
           );
         } else if (const std::string in = fileAfter(",import="); !in.empty()) {
           mTools.AskMapTexture(kind, EdTools::MapTextureOp::Import, in);
         } else {
           mTools.AskMapTexture(
             kind,
-            what.find(",clear") != std::string::npos ? EdTools::MapTextureOp::Clear : EdTools::MapTextureOp::Make,
+            what.contains(",clear") ? EdTools::MapTextureOp::Clear : EdTools::MapTextureOp::Make,
             {},
-            what.find(",stale") != std::string::npos
+            what.contains(",stale")
           );
         }
         gpg::Logf("editor: /mapwide %s", what.c_str());
@@ -140,11 +138,11 @@ namespace faf::editor
         pickDone = true;
         const std::string kinds = std::string(",") + value[0].c_str() + ",";
         PickFilter& pickable = mTools.Pickable();
-        pickable.markers = kinds.find(",markers,") != std::string::npos;
-        pickable.pathNodes = kinds.find(",pathnodes,") != std::string::npos;
-        pickable.units = kinds.find(",units,") != std::string::npos;
-        pickable.props = kinds.find(",props,") != std::string::npos;
-        pickable.decals = kinds.find(",decals,") != std::string::npos;
+        pickable.markers = kinds.contains(",markers,");
+        pickable.pathNodes = kinds.contains(",pathnodes,");
+        pickable.units = kinds.contains(",units,");
+        pickable.props = kinds.contains(",props,");
+        pickable.decals = kinds.contains(",decals,");
         gpg::Logf("editor: /pickfilter %s", value[0].c_str());
       }
     }
@@ -164,7 +162,7 @@ namespace faf::editor
           mTools.AskLayerMove(from - 1, to - 1);
           gpg::Logf("editor: /movelayer %d to %d", from, to);
           // `,undo`: Edit > Undo two seconds after, as a click would.
-          if (std::string(value[0].c_str()).find(",undo") != std::string::npos) {
+          if (std::string(value[0].c_str()).contains(",undo")) {
             moveUndoAt = ImGui::GetTime() + 2.0;
           }
         }
@@ -239,9 +237,9 @@ namespace faf::editor
           CheckIssue issue;
           issue.marker = "test run";
           issue.text = line.size() > 400 ? line.substr(0, 400) + "..." : line;
-          if (!lowerFolder.empty() && lower.find(lowerFolder) != std::string::npos) {
+          if (!lowerFolder.empty() && lower.contains(lowerFolder)) {
             issue.level = CheckIssue::Level::Error;
-          } else if (lower.find(".lua") != std::string::npos || lower.find("traceback") != std::string::npos) {
+          } else if (lower.contains(".lua") || lower.contains("traceback")) {
             issue.level = CheckIssue::Level::Warning;
           } else {
             issue.level = CheckIssue::Level::Note;
@@ -249,11 +247,11 @@ namespace faf::editor
           mTestRunIssues.push_back(std::move(issue));
         }
         std::stable_sort(mTestRunIssues.begin(), mTestRunIssues.end(), [](const CheckIssue& a, const CheckIssue& b) {
-          return static_cast<int>(a.level) < static_cast<int>(b.level);
+          return std::to_underlying(a.level) < std::to_underlying(b.level);
         });
         int counts[3] = {0, 0, 0};
         for (const CheckIssue& issue : mTestRunIssues) {
-          ++counts[static_cast<int>(issue.level)];
+          ++counts[std::to_underlying(issue.level)];
         }
         gpg::Logf(
           "editor: test run done: %d errors (the map's files), %d warnings (other Lua), %d notes",
@@ -1717,7 +1715,7 @@ namespace faf::editor
       std::set<std::string>& hidden = mTools.HiddenMarkerTypes();
       const auto groupShown = [&](const bool paths) {
         for (const MarkerType& type : MarkerTypes()) {
-          if ((std::string(type.group) == "Path nodes") == paths && hidden.count(type.type) != 0) {
+          if ((std::string(type.group) == "Path nodes") == paths && hidden.contains(type.type)) {
             return false;
           }
         }
@@ -2075,7 +2073,7 @@ namespace faf::editor
           );
         }
         for (const SaveEntry& marker : mDocument.SaveData().Markers()) {
-          if (marker.name.rfind("ARMY_", 0) != 0) {
+          if (!marker.name.starts_with("ARMY_")) {
             continue;
           }
           const std::vector<double> position = ValueNumbers(marker.Get("position"));
@@ -2376,7 +2374,7 @@ namespace faf::editor
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("%zu", i + 1);
         ImGui::SameLine(ImGui::GetFontSize() * 1.6f);
-        int role = static_cast<int>(slot.role);
+        int role = std::to_underlying(slot.role);
         ImGui::SetNextItemWidth(roleWidth);
         if (EdCombo("##role", &role, kRoles, 3)) {
           slot.role = static_cast<PlaySlot::Role>(role);
@@ -2704,12 +2702,11 @@ namespace faf::editor
       ImGui::InputText("Folder", mSaveAsName, sizeof(mSaveAsName), ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::TextDisabled("FAF names map folders name.vNNNN; the files take the name without the version.");
     if (ImGui::Button("Save", ImVec2(Em(120.0f), 0.0f)) || enter) {
-      std::string message;
-      if (mDocument.SaveAsNewFolderIn(mSaveAsParent, mSaveAsName, message)) {
-        gpg::Logf("editor: %s", message.c_str());
+      if (const auto saved = mDocument.SaveAsNewFolderIn(mSaveAsParent, mSaveAsName)) {
+        gpg::Logf("editor: %s", saved->c_str());
         ImGui::CloseCurrentPopup();
       } else {
-        gpg::Warnf("editor: %s", message.c_str());
+        gpg::Warnf("editor: %s", saved.error().c_str());
       }
     }
     ImGui::SameLine();
@@ -2973,12 +2970,11 @@ namespace faf::editor
     if (ImGui::Button("Create", ImVec2(Em(120.0f), 0.0f))) {
       mNewMap.title = mNewMapTitle;
       mNewMap.folder = mNewMapFolder;
-      std::string message;
-      if (mDocument.CreateNew(mNewMap, message)) {
-        gpg::Logf("editor: %s", message.c_str());
+      if (const auto created = mDocument.CreateNew(mNewMap)) {
+        gpg::Logf("editor: %s", created->c_str());
         ImGui::CloseCurrentPopup();
       } else {
-        gpg::Warnf("editor: %s", message.c_str());
+        gpg::Warnf("editor: %s", created.error().c_str());
       }
     }
     ImGui::SameLine();
@@ -3052,7 +3048,9 @@ namespace faf::editor
     ImGui::BeginDisabled(!mPackagePlan.errors.empty());
     if (ImGui::Button("Package", ImVec2(Em(120.0f), 0.0f))) {
       std::filesystem::path written;
-      const bool ok = mDocument.WritePackage(mPackagePlan, written, mPackageMessage);
+      const auto packaged = mDocument.WritePackage(mPackagePlan, written);
+      const bool ok = packaged.has_value();
+      mPackageMessage = ok ? *packaged : packaged.error();
       (ok ? gpg::Logf : gpg::Warnf)("editor: %s", mPackageMessage.c_str());
     }
     ImGui::EndDisabled();

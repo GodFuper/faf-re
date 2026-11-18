@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <map>
 #include <mutex>
+#include <print>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -57,7 +58,7 @@ namespace faf::remote::client
       )
         : mFile(file)
       {
-        std::fprintf(mFile, "# beat focus compared agree oracle-only client-only orphan-client no-mesh live-grid\n");
+        std::println(mFile, "# beat focus compared agree oracle-only client-only orphan-client no-mesh live-grid");
       }
 
       void OnSyncWalkDone(
@@ -198,7 +199,7 @@ namespace faf::remote::client
             const auto last = mLastMesh.find(record.id);
             if (last == mLastMesh.end() || last->second != userEntity->mMeshInstance) {
               ++mTotalMeshNew;
-            } else if (visited.count(userEntity) == 0u) {
+            } else if (!visited.contains(userEntity)) {
               ++mTotalNotVisited;
             }
           }
@@ -209,11 +210,11 @@ namespace faf::remote::client
         for (const auto& [id, userEntity] : session.mEntities) {
           if (
             userEntity == nullptr || userEntity->mMeshInstance == nullptr ||
-            userEntity->mMeshInstance->isHidden != 0u || oracleIds.count(id) != 0u
+            userEntity->mMeshInstance->isHidden != 0u || oracleIds.contains(id)
           ) {
             continue;
           }
-          if (orphans.count(id) != 0u) {
+          if (orphans.contains(id)) {
             ++orphanClient;
           } else {
             ++clientOnly;
@@ -239,9 +240,9 @@ namespace faf::remote::client
         mTotalOrphanClient += orphanClient;
         mTotalLiveGrid += liveGrid;
         ++mComparedBeats;
-        std::fprintf(
+        std::println(
           mFile,
-          "%d %d %llu %llu %llu %llu %llu %llu %llu\n",
+          "{} {} {} {} {} {} {} {} {}",
           beat,
           oracle.focusArmy,
           static_cast<unsigned long long>(compared),

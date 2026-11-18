@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdlib>
 #include <iterator>
+#include <print>
+#include <ranges>
 
 #include "headless/ReplayEffectDump.h"
 #include "headless/ReplayPoseDump.h"
@@ -87,7 +89,7 @@ namespace faf::headless
       mFile = nullptr;
       return;
     }
-    std::fprintf(mFile, "beat,build_ms,send_ms,interval_ms,entities,bytes\n");
+    std::println(mFile, "beat,build_ms,send_ms,interval_ms,entities,bytes");
   }
 
   CReplayViewBench::~CReplayViewBench()
@@ -587,9 +589,9 @@ namespace faf::headless
     }
     mHaveLastFrames = true;
     if (mFile != nullptr) {
-      std::fprintf(
+      std::println(
         mFile,
-        "%u,%.3f,%.3f,%.3f,%llu,%llu\n",
+        "{},{:.3f},{:.3f},{:.3f},{},{}",
         ViewBeat(),
         mBeat.buildMs,
         mBeat.sendMs,
@@ -663,11 +665,10 @@ namespace faf::headless
         if (mPoseLaneBytes[army].empty()) {
           continue;
         }
-        std::vector<double> lane;
-        lane.reserve(mPoseLaneBytes[army].size());
-        for (const std::uint32_t bytes : mPoseLaneBytes[army]) {
-          lane.push_back(static_cast<double>(bytes) * 10.0 / 1024.0);
-        }
+        auto lane = mPoseLaneBytes[army] | std::views::transform([&](const std::uint32_t bytes) {
+          return static_cast<double>(bytes) * 10.0 / 1024.0;
+        }) |
+          std::ranges::to<std::vector<double>>();
         summary += "\n  pose lane view " + std::to_string(army) + ": " + Distribution(lane, "KB/s");
       }
     }
@@ -886,7 +887,7 @@ namespace faf::headless
           "most by %llu; first at beat %u: %llu only the client holds, %llu only the routes count), last difference "
           "%lld",
           army,
-          view.applier ? view.applier->Live() : std::size_t{0},
+          view.applier ? view.applier->Live() : 0uz,
           mEffectRoutes->HeldBy(army),
           static_cast<double>(view.routesHeldSum) / static_cast<double>(view.beats),
           static_cast<unsigned long long>(view.beatsDiffering),

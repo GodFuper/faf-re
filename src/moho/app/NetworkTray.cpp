@@ -22,7 +22,7 @@ namespace moho
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
-#include <windows.h>
+#include <Windows.h>
 #include <objbase.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -196,7 +196,13 @@ namespace moho
         );
         out += "peer " + PeerName(p) + ": " + p.state + ", attempts " + std::to_string(p.attempts) + ", " +
           NETPANEL_PathText(p) + " (picked: " + faf::netlink::PathChoiceText(p.choice) + "), round trip " + RttText(p) +
-          ", lane " + (p.onLane ? (p.laneEncrypted ? "encrypted" : "plain") : "off") + ", " + counts + "\r\n";
+          ", lane " +
+          std::string(
+                 p.gameChannel ? (p.gameChannelEncrypted ? "game channel, encrypted" : "game channel")
+                   : p.onLane  ? (p.laneEncrypted ? "encrypted" : "plain")
+                               : "off"
+          ) +
+          ", " + counts + "\r\n";
       }
       if (!view.log.empty()) {
         out += "latest network log lines:\r\n";
@@ -540,7 +546,7 @@ namespace moho
           gpg::Logf("NETLINK: tray: network panel %s", net_ShowPanel ? "shown" : "hidden");
         } else if (cmd == kCmdLogFolder) {
           const std::string result = OpenLogFolder(hwnd);
-          if (result.rfind("Log folder opened", 0) != 0) {
+          if (!result.starts_with("Log folder opened")) {
             Notify(hwnd, "Log folder", result); // the tray has no panel to say it in
           }
         } else if (cmd == kCmdDiagnostics) {

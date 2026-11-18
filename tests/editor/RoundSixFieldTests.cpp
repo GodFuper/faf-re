@@ -35,7 +35,7 @@ namespace
     const int x
   )
   {
-    return f.v[static_cast<std::size_t>(32) * static_cast<std::size_t>(f.w) + static_cast<std::size_t>(x)];
+    return f.v[32uz * static_cast<std::size_t>(f.w) + static_cast<std::size_t>(x)];
   }
 
   TEST(
@@ -48,8 +48,8 @@ namespace
     const auto run = [](const int kind) {
       MaskGenContext context = Ramp();
       field::Grid out;
-      std::string error;
-      EXPECT_TRUE(EvaluateMaskRules(context, WaterMaskRules(kind, 4.0f, 6.0f, 0.5f, 60.0f), out, error)) << error;
+      const auto made = EvaluateMaskRules(context, WaterMaskRules(kind, 4.0f, 6.0f, 0.5f, 60.0f), out);
+      EXPECT_TRUE(made) << made.error();
       return out;
     };
     const field::Grid under = run(3);
@@ -70,8 +70,7 @@ namespace
     MaskGenContext higher = Ramp();
     higher.water = 30.0f;
     field::Grid moved;
-    std::string error;
-    ASSERT_TRUE(EvaluateMaskRules(higher, WaterMaskRules(3, 4.0f, 6.0f, 0.5f, 60.0f), moved, error));
+    ASSERT_TRUE(EvaluateMaskRules(higher, WaterMaskRules(3, 4.0f, 6.0f, 0.5f, 60.0f), moved));
     EXPECT_GT(At(moved, 25), 0.9f);
   }
 
@@ -90,11 +89,12 @@ namespace
     ASSERT_NE(MaskRuleSpecOf("named"), nullptr);
     rule.v["slot"] = 2;
     field::Grid out;
-    std::string error;
-    ASSERT_TRUE(EvaluateMaskRules(context, {rule}, out, error)) << error;
+    auto made = EvaluateMaskRules(context, {rule}, out);
+    ASSERT_TRUE(made) << made.error();
     EXPECT_NEAR(At(out, 10), 0.75f, 1e-4f);
     rule.v["slot"] = 3; // an empty slot masks nothing
-    ASSERT_TRUE(EvaluateMaskRules(context, {rule}, out, error)) << error;
+    made = EvaluateMaskRules(context, {rule}, out);
+    ASSERT_TRUE(made) << made.error();
     EXPECT_NEAR(At(out, 10), 0.0f, 1e-4f);
   }
 
@@ -105,12 +105,12 @@ namespace
   {
     int sets = 0;
     for (const TextureTheme& theme : TextureThemes()) {
-      sets += std::string(theme.id).rfind("m_", 0) == 0 ? 1 : 0;
+      sets += std::string(theme.id).starts_with("m_") ? 1 : 0;
     }
     EXPECT_EQ(sets, 35);
     int styles = 0;
     for (std::size_t i = 0; i < RecipeStyles().size(); ++i) {
-      if (std::string(RecipeStyles()[i].id).rfind("m_", 0) != 0) {
+      if (!std::string(RecipeStyles()[i].id).starts_with("m_")) {
         continue;
       }
       ++styles;

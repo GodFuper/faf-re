@@ -8,6 +8,7 @@
 #include "editor/ui/EdThemeColors.h"
 #include "editor/tools/EdTextureLibrary.h"
 #include "editor/doc/EdDocument.h"
+#include "editor/doc/EdScenarioInfo.h"
 #include "editor/ui/EdControls.h"
 #include "editor/ui/EdHelp.h"
 #include "editor/ui/EdUiScale.h"
@@ -16,6 +17,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -220,9 +222,12 @@ namespace faf::editor
     ImGui::SetNextItemWidth(-1.0f);
     ImGui::DragFloat3("##meshoffset", mMeshOptions.offset, 0.5f, -10000.0f, 10000.0f, "%.1f");
     EdSetItemTooltip("Offset X / Y / Z after the scale, in map units");
-    static constexpr const char* kNormals[] = {"Normals: the file's", "Normals: from the faces"};
+    static constexpr const char* kNormals[] = {
+      "Normals: the file's (smooth where none)", "Normals: smooth", "Normals: flat"
+    };
     ImGui::SetNextItemWidth(Em(160.0f));
-    (void)EdCombo("##meshnormals", &mMeshOptions.normals, kNormals, 2);
+    (void)EdCombo("##meshnormals", &mMeshOptions.normals, kNormals, 3);
+    EdSetItemTooltip("Smooth: each corner the area-weighted normal of its faces; flat: every triangle its own");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(Em(120.0f));
     FillDragFloat(
@@ -236,6 +241,19 @@ namespace faf::editor
     EdSetItemTooltip(
       "A file without texture coordinates gets them from the ground plan, repeating every so many units"
     );
+    static constexpr const char* kMaterialsBy[] = {
+      "Materials: the OBJ's (usemtl)", "Materials: by o / g group", "Materials: one for all"
+    };
+    ImGui::SetNextItemWidth(Em(200.0f));
+    (void)EdCombo("##meshmaterials", &mMeshOptions.materialsBy, kMaterialsBy, 3);
+    EdSetItemTooltip("A material in the manifest for each, reused when one of that name is there");
+    ImGui::SameLine();
+    static constexpr const char* kLightMaskUv[] = {"Light mask uv: over the map", "Light mask uv: the texture's"};
+    ImGui::SetNextItemWidth(-1.0f);
+    (void)EdCombo("##meshuv2", &mMeshOptions.lightMaskUv, kLightMaskUv, 2);
+    EdSetItemTooltip(
+      "The second texture coordinates, which the light masks use: x, z over the map's size, or the texture's own"
+    );
     ImGui::Checkbox("A patch for each object / group", &mMeshOptions.byGroup);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(Em(110.0f));
@@ -248,12 +266,17 @@ namespace faf::editor
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::Checkbox("Replace the existing patches", &mMeshOptions.replace);
+    EdSetItemTooltip("Off: the new patches join the manifest's; on: its ground patches go first (sky pieces stay)");
+    ImGui::SameLine();
     ImGui::Checkbox("Make it a mesh terrain map", &mMeshMakeMap);
-    EdSetItemTooltip("The scenario names the patches (TerrainSystem = 'mesh', TerrainMesh), one undo step");
+    EdSetItemTooltip("The scenario names the patches (TerrainSystem = 'mesh', TerrainMesh); undoable");
     ImGui::SameLine();
     ImGui::Checkbox("Show over the map", &mMeshShown);
     // The loaded mesh map: its materials, its patches and its settings, edited in place; Save writes the manifest.
-    if (edmesh::MeshMap* const mesh = mMeshMapView; mesh != nullptr && mesh->Loaded()) {
+    if (
+      edmesh::MeshMap* const mesh = mMeshMapView; mesh != nullptr && (mesh->Loaded() || !mesh->manifestPath.empty())
+    ) {
       if (Section("Materials", false)) {
         static constexpr const char* kSlots[edmesh::kSlots] = {
           "Diffuse A",
@@ -307,14 +330,24 @@ namespace faf::editor
           ImGui::Checkbox("Highlight", &material.highlight);
           ImGui::SameLine();
           ImGui::Checkbox("Additive", &material.additive);
+          bool alphaTest = material.alphaTest >= 0.0f;
+          if (ImGui::Checkbox("Alpha test", &alphaTest)) {
+            material.alphaTest = alphaTest ? 128.0f : -1.0f;
+          }
+          EdSetItemTooltip("SC2's ALPHA_TEST: a pixel is drawn where its alpha x 255 is above the reference");
+          if (alphaTest) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(-1.0f);
+            FillSliderFloat("##alpharef", &material.alphaTest, 0.0f, 255.0f, "Reference %.0f");
+          }
         }
       }
       if (Section("Patches", false)) {
         int remove = -1;
-        std::vector<std::string> names;
-        for (const edmesh::Material& material : mesh->materials) {
-          names.push_back(material.name);
-        }
+        auto names = mesh->materials | std::views::transform([&](const edmesh::Material& material) {
+          return material.name;
+        }) |
+          std::ranges::to<std::vector<std::string>>();
         for (std::size_t p = 0; p < mesh->patches.size(); ++p) {
           edmesh::Patch& patch = mesh->patches[p];
           ImGui::PushID(static_cast<int>(p));
@@ -337,6 +370,9 @@ namespace faf::editor
             ImGui::EndCombo();
           }
           ImGui::SameLine();
+          ImGui::Checkbox("Sky", &patch.sky);
+          EdSetItemTooltip("A sky piece (SC2's): it follows the camera, unlit, instead of being ground");
+          ImGui::SameLine();
           if (ImGui::SmallButton("Remove")) {
             remove = static_cast<int>(p);
           }
@@ -347,36 +383,92 @@ namespace faf::editor
         }
       }
       if (Section("The mesh map's settings", false)) {
+        // FAF Studio's list: every manifest setting, its value or "-" when the manifest leaves it out; the chosen
+        // one's meaning, its value (a number by a slider, a file name typed) and Set / unset.
         edmesh::Settings& s = mesh->settings;
-        ImGui::SetNextItemWidth(-1.0f);
-        FillDragFloat("##meshsize", &s.size, 1.0f, 64.0f, 8192.0f, "Size %.0f");
-        ImGui::SetNextItemWidth(-1.0f);
-        FillDragFloat(
-          "##meshwater", &s.water, 0.5f, -10000.0f, 1000.0f, s.water > -9999.0f ? "Water %.1f" : "Water: none"
-        );
-        ImGui::SetNextItemWidth(-1.0f);
-        FillDragFloat("##meshhigh", &s.meshHigh, 0.5f, -10000.0f, 2000.0f, "Mesh high %.1f");
-        ImGui::SetNextItemWidth(-1.0f);
-        ImGui::DragFloat4("##meshplayable", s.playable, 1.0f, 0.0f, 8192.0f, "%.0f");
-        EdSetItemTooltip("The playable rectangle: x0, z0, x1, z1");
+        const std::vector<edmesh::SettingKey>& keys = edmesh::SettingKeys();
+        mMeshSetting = std::clamp(mMeshSetting, 0, static_cast<int>(keys.size()) - 1);
+        if (ImGui::BeginChild("##meshsettings", ImVec2(0.0f, Em(150.0f)), ImGuiChildFlags_Borders)) {
+          for (std::size_t k = 0; k < keys.size(); ++k) {
+            const edmesh::SettingKey& key = keys[k];
+            char value[96] = "-";
+            if (edmesh::SettingSet(s, key.key)) {
+              if (const std::string* text = edmesh::SettingText(s, key.key)) {
+                (void)std::snprintf(value, sizeof(value), "%s", text->c_str());
+              } else if (const float* number = edmesh::SettingNumber(s, key.key)) {
+                (void)std::snprintf(
+                  value, sizeof(value), "%.*f", std::max(0, key.decimals), static_cast<double>(*number)
+                );
+              }
+            }
+            ImGui::PushID(static_cast<int>(k));
+            if (ImGui::Selectable(key.key, mMeshSetting == static_cast<int>(k))) {
+              mMeshSetting = static_cast<int>(k);
+            }
+            ImGui::SameLine(Em(180.0f));
+            ImGui::TextDisabled("%s", value);
+            ImGui::PopID();
+          }
+        }
+        ImGui::EndChild();
+        const edmesh::SettingKey& key = keys[static_cast<std::size_t>(mMeshSetting)];
+        ImGui::TextDisabled("%s: %s", key.key, key.help);
+        if (std::string* text = edmesh::SettingText(s, key.key)) {
+          char buffer[260];
+          (void)std::snprintf(buffer, sizeof(buffer), "%s", text->c_str());
+          ImGui::SetNextItemWidth(-Em(110.0f));
+          if (ImGui::InputTextWithHint("##meshsettingtext", "file name beside terrain.lua", buffer, sizeof(buffer))) {
+            *text = buffer;
+            edmesh::SetSettingGiven(s, key.key, !text->empty());
+          }
+        } else if (float* number = edmesh::SettingNumber(s, key.key)) {
+          float shown = edmesh::SettingSet(s, key.key) ? *number : key.min;
+          char format[32];
+          (void)std::snprintf(format, sizeof(format), "Value %%.%df", std::max(0, key.decimals));
+          ImGui::SetNextItemWidth(-Em(110.0f));
+          if (FillSliderFloat("##meshsettingvalue", &shown, key.min, key.max, format)) {
+            *number = key.decimals == -1 ? std::round(shown) : shown;
+            edmesh::SetSettingGiven(s, key.key, true);
+          }
+          EdSetItemTooltip("The value of %s; a setting the manifest leaves out uses the game's default", key.key);
+        }
+        ImGui::SameLine();
+        if (
+          ImGui::Button(edmesh::SettingSet(s, key.key) ? "Unset##meshsetting" : "Set##meshsetting", ImVec2(-1.0f, 0.0f))
+        ) {
+          edmesh::SetSettingGiven(s, key.key, !edmesh::SettingSet(s, key.key));
+        }
+        if (ImGui::Button("Sync map")) {
+          mMeshAskMore = 6;
+        }
+        EdSetItemTooltip("Size, playable area, water, the ground's lowest and highest point and the sun from the map");
       }
       if (PrimaryButton("Save the manifest")) {
         mMeshAskMore = 3;
       }
       EdSetItemTooltip("Writes terrain.lua as edited here and reads the mesh again");
       ImGui::SameLine();
-      if (ImGui::Button("Sync (read it again)")) {
+      if (ImGui::Button("Load (read it again)")) {
         mMeshAskMore = 1;
       }
-      ImGui::SameLine();
-      if (ImGui::Button("Unset")) {
-        mMeshAskMore = 4;
+    }
+    // FAF Studio's "Mesh map in scenario" and New, whatever the panel holds: the scenario's TerrainSystem names the
+    // mesh (its ground the patches) or not (the height field); undoable, and the view draws the manifest the panel
+    // holds.
+    if (mDocument.Map() != nullptr) {
+      std::string system;
+      bool meshMap = ReadScenarioField(mDocument.Scenario(), "TerrainSystem", system) && system == "mesh";
+      if (ImGui::Checkbox("Mesh map in scenario (the map's terrain/terrain.lua is its ground)", &meshMap)) {
+        mMeshAskMore = meshMap ? 5 : 4;
       }
-      EdSetItemTooltip("The scenario no longer names the mesh: the height field is the ground (one undo step)");
-    } else if (mDocument.Map() != nullptr) {
-      if (ImGui::Button("Set: the map's terrain/terrain.lua is its ground")) {
-        mMeshAskMore = 5;
+      EdSetItemTooltip(
+        "On: the scenario says TerrainSystem = 'mesh' and names terrain/terrain.lua; off: the height field is the "
+        "ground (undoable); the view draws the manifest the panel holds, its unsaved edits too"
+      );
+      if (ImGui::Button("New manifest from the map")) {
+        mMeshAskMore = 7;
       }
+      EdSetItemTooltip("A manifest with the map's size, playable area, water, heights and sun, no patches yet");
     }
     if (!mMeshStatus.empty()) {
       ImGui::TextWrapped("%s", mMeshStatus.c_str());

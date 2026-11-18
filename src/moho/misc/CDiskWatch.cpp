@@ -290,7 +290,7 @@ bool moho::FILE_Wild(
   }
 
   std::string normalizedPath(path);
-  if (normalizedPath.find('.') == std::string::npos) {
+  if (!normalizedPath.contains('.')) {
     normalizedPath.push_back('.');
   }
 
@@ -672,7 +672,7 @@ bool CDiskWatch::AddDirectory(
     return false;
   }
 
-  if (mDirWatchMap.find(normalizedPath) != mDirWatchMap.end()) {
+  if (mDirWatchMap.contains(normalizedPath)) {
     gpg::Warnf("CDiskWatch::AddDirectory(): Attempting to add \"%s\" multiple times.", normalizedPath.c_str());
     gpg::core::func_UnlockShared(&mLock);
     return false;

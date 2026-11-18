@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <optional>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -47,14 +48,11 @@ namespace faf::editor
         }
       }
 
-      std::optional<Value> ReadValue(
-        std::string& error
-      )
+      std::expected<Value, std::string> ReadValue()
       {
         SkipSpace();
         if (mAt >= mText.size()) {
-          error = "the file ends inside a value";
-          return std::nullopt;
+          return std::unexpected("the file ends inside a value");
         }
         const char c = mText[mAt];
         Value value;
@@ -69,9 +67,9 @@ namespace faf::editor
               value.end = mAt;
               return value;
             }
-            std::optional<Value> item = ReadValue(error);
+            std::expected<Value, std::string> item = ReadValue();
             if (!item) {
-              return std::nullopt;
+              return item;
             }
             value.items.push_back(std::move(*item));
             SkipSpace();
@@ -83,8 +81,7 @@ namespace faf::editor
         if (c == '\'' || c == '"') {
           const std::size_t end = mText.find(c, mAt + 1);
           if (end == std::string::npos) {
-            error = "a string doesn't end";
-            return std::nullopt;
+            return std::unexpected("a string doesn't end");
           }
           value.atom = mText.substr(mAt, end + 1 - mAt);
           mAt = end + 1;
@@ -98,8 +95,7 @@ namespace faf::editor
           ++mAt;
         }
         if (mAt == start) {
-          error = std::string("unexpected '") + c + "'";
-          return std::nullopt;
+          return std::unexpected(std::string("unexpected '") + c + "'");
         }
         value.atom = mText.substr(start, mAt - start);
         value.end = mAt;
@@ -125,41 +121,37 @@ namespace faf::editor
       Value value;
     };
 
-    bool ReadAssignments(
-      const std::string& text,
-      std::vector<Assignment>& out,
-      std::string& error
+    std::expected<std::vector<Assignment>, std::string> ReadAssignments(
+      const std::string& text
     )
     {
+      std::vector<Assignment> out;
       Reader reader(text);
       for (;;) {
         reader.SkipSpace();
         std::size_t& at = reader.At();
         if (at >= text.size()) {
-          return true;
+          return out;
         }
         const std::size_t nameStart = at;
         while (at < text.size() && (std::isalnum(static_cast<unsigned char>(text[at])) != 0 || text[at] == '_')) {
           ++at;
         }
         if (at == nameStart) {
-          error = "expected a name at offset " + std::to_string(at);
-          return false;
+          return std::unexpected("expected a name at offset " + std::to_string(at));
         }
         Assignment assignment;
         assignment.name = text.substr(nameStart, at - nameStart);
         reader.SkipSpace();
         if (at >= text.size() || text[at] != '=') {
-          error = "expected '=' after " + assignment.name;
-          return false;
+          return std::unexpected("expected '=' after " + assignment.name);
         }
         ++at;
         reader.SkipSpace();
         assignment.valueStart = at;
-        std::optional<Value> value = reader.ReadValue(error);
+        std::expected<Value, std::string> value = reader.ReadValue();
         if (!value) {
-          error = assignment.name + ": " + error;
-          return false;
+          return std::unexpected(assignment.name + ": " + value.error());
         }
         assignment.valueEnd = at;
         assignment.value = std::move(*value);
@@ -186,12 +178,10 @@ namespace faf::editor
       const bool hydro
     )
     {
-      std::vector<std::vector<std::string>> groups;
-      for (const Value& item : table.items) {
-        groups.push_back(
-          item.isTable ? Names(item, hydro) : std::vector<std::string>{AdaptiveMarkerName(item.atom, hydro)}
-        );
-      }
+      auto groups = table.items | std::views::transform([&](const Value& item) {
+        return item.isTable ? Names(item, hydro) : std::vector<std::string>{AdaptiveMarkerName(item.atom, hydro)};
+      }) |
+        std::ranges::to<std::vector<std::vector<std::string>>>();
       return groups;
     }
 
@@ -668,7 +658,7 @@ namespace faf::editor
       return {};
     }
     const std::string path = script.substr(quote + 1, end + std::string("_tables.lua").size() - quote - 1);
-    return path.rfind("/maps/", 0) == 0 ? path : std::string();
+    return path.starts_with("/maps/") ? path : std::string();
   }
 
   std::string WithScenarioAdaptive(
@@ -700,7 +690,7 @@ namespace faf::editor
   )
   {
     const std::string prefix = hydro ? "Hydrocarbon " : "Mass ";
-    if (markerName.rfind(prefix, 0) != 0 || markerName.size() == prefix.size()) {
+    if (!markerName.starts_with(prefix) || markerName.size() == prefix.size()) {
       return {};
     }
     const std::string suffix = markerName.substr(prefix.size());
@@ -732,16 +722,16 @@ namespace faf::editor
     return prefix + (number > 9 ? std::to_string(number) : "0" + std::to_string(number));
   }
 
-  bool ParseAdaptiveTables(
+  std::expected<void, std::string> ParseAdaptiveTables(
     const std::string& text,
-    AdaptiveTables& tables,
-    std::string& error
+    AdaptiveTables& tables
   )
   {
-    std::vector<Assignment> assignments;
-    if (!ReadAssignments(text, assignments, error)) {
-      return false;
+    auto read = ReadAssignments(text);
+    if (!read) {
+      return std::unexpected(std::move(read.error()));
     }
+    const std::vector<Assignment>& assignments = *read;
     tables = AdaptiveTables{};
     for (const Assignment& assignment : assignments) {
       const Value& value = assignment.value;
@@ -763,7 +753,7 @@ namespace faf::editor
         }
       }
     }
-    return true;
+    return {};
   }
 
   std::string WithAdaptiveTables(
@@ -798,9 +788,8 @@ namespace faf::editor
     wanted.emplace_back("forwardCrazyrushMexes", ListText(tables.forwardCrazyrush, false));
     wanted.emplace_back("crazyrushOneMexes", ListText(tables.crazyrushOne, false));
 
-    std::vector<Assignment> assignments;
-    std::string error;
-    if (text.empty() || !ReadAssignments(text, assignments, error)) {
+    const auto read = ReadAssignments(text);
+    if (text.empty() || !read) {
       std::string out =
         "-- The adaptive map's tables (the \"Ultimate maps\" script's _tables.lua), written by the FAF map editor.\n";
       for (const auto& [name, value] : wanted) {
@@ -808,9 +797,10 @@ namespace faf::editor
       }
       return text.empty() ? out : text + "\n" + out;
     }
+    const std::vector<Assignment>& assignments = *read;
     // Only the tables whose meaning changed are written (an untouched one keeps its layout and comments).
     AdaptiveTables before;
-    (void)ParseAdaptiveTables(text, before, error);
+    (void)ParseAdaptiveTables(text, before);
     const auto groupsOf = [](const AdaptiveTables& from, const std::string& name) {
       for (const auto& [option, groups] : from.options) {
         if (option == name) {
@@ -849,25 +839,25 @@ namespace faf::editor
         missing.emplace_back(name, value);
       }
     }
-    for (auto it = assignments.rbegin(); it != assignments.rend(); ++it) {
+    for (auto& entry : assignments | std::views::reverse) {
       for (const auto& [name, value] : wanted) {
-        if (it->name != name || unchanged(name)) {
+        if (entry.name != name || unchanged(name)) {
           continue;
         }
         // Tables of rows: only the rows that changed (the rest of the table's text kept).
         std::string written = value;
         if (name == "spwnMexArmy") {
-          written = RowsWithin(text, it->value, tables.mexArmy, false, value, ",\n    ");
+          written = RowsWithin(text, entry.value, tables.mexArmy, false, value, ",\n    ");
         } else if (name == "spwnHydroArmy") {
-          written = RowsWithin(text, it->value, tables.hydroArmy, true, value, ",\n    ");
+          written = RowsWithin(text, entry.value, tables.hydroArmy, true, value, ",\n    ");
         } else {
           for (const OptionTable& option : KnownOptionTables()) {
             if (name == option.name) {
-              written = RowsWithin(text, it->value, groupsOf(tables, name), option.hydro, value, ",");
+              written = RowsWithin(text, entry.value, groupsOf(tables, name), option.hydro, value, ",");
             }
           }
         }
-        out.replace(it->valueStart, it->valueEnd - it->valueStart, written);
+        out.replace(entry.valueStart, entry.valueEnd - entry.valueStart, written);
       }
     }
     for (const auto& [name, value] : missing) {

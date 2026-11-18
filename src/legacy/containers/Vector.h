@@ -2163,7 +2163,8 @@ namespace fa
      * `vector(InputIt,InputIt)` vs. `vector(size_type,const T&)`
      * overload-resolution pitfall).
      */
-    template <class InputIt, class = std::enable_if_t<!std::is_integral_v<InputIt>>>
+    template <class InputIt>
+      requires(!std::is_integral_v<InputIt>)
     vector(
       InputIt first,
       InputIt last
@@ -6792,7 +6793,7 @@ namespace fa
     )
     {
       const std::size_t offset = (size() == 0u) ? 0u : static_cast<std::size_t>(pos - first_);
-      (void)insert(pos, static_cast<std::size_t>(1), value);
+      (void)insert(pos, 1uz, value);
       return first_ + offset;
     }
 
@@ -14823,14 +14824,14 @@ namespace fa
   class list
   {
   public:
-    typedef T value_type;
-    typedef Alloc allocator_type;
-    typedef std::size_t size_type;
-    typedef std::ptrdiff_t difference_type;
-    typedef T* pointer;
-    typedef const T* const_pointer;
-    typedef T& reference;
-    typedef const T& const_reference;
+    using value_type = T;
+    using allocator_type = Alloc;
+    using size_type = std::size_t;
+    using difference_type = std::ptrdiff_t;
+    using pointer = T*;
+    using const_pointer = const T*;
+    using reference = T&;
+    using const_reference = const T&;
 
   private:
     struct _Node;
@@ -14863,8 +14864,8 @@ namespace fa
       }
     };
 
-    typedef typename std::allocator_traits<Alloc>::template rebind_alloc<_Node> _Node_alloc_type;
-    typedef _Node_base* _Nodeptr;
+    using _Node_alloc_type = typename std::allocator_traits<Alloc>::template rebind_alloc<_Node>;
+    using _Nodeptr = _Node_base*;
 
 #if FAF_RETAIL_LAYOUT
     void* _Myproxy = nullptr; // +0x0
@@ -14885,11 +14886,11 @@ namespace fa
       {}
 
     public:
-      typedef std::bidirectional_iterator_tag iterator_category;
-      typedef value_type value_type;
-      typedef difference_type difference_type;
-      typedef pointer pointer;
-      typedef reference reference;
+      using iterator_category = std::bidirectional_iterator_tag;
+      using value_type = value_type;
+      using difference_type = difference_type;
+      using pointer = pointer;
+      using reference = reference;
 
       iterator()
         : _Ptr(0)
@@ -15035,11 +15036,11 @@ namespace fa
       {}
 
     public:
-      typedef std::bidirectional_iterator_tag iterator_category;
-      typedef value_type value_type;
-      typedef difference_type difference_type;
-      typedef const_pointer pointer;
-      typedef const_reference reference;
+      using iterator_category = std::bidirectional_iterator_tag;
+      using value_type = value_type;
+      using difference_type = difference_type;
+      using pointer = const_pointer;
+      using reference = const_reference;
 
       const_iterator()
         : _Ptr(0)
@@ -15106,8 +15107,8 @@ namespace fa
       }
     };
 
-    typedef std::reverse_iterator<iterator> reverse_iterator;
-    typedef std::reverse_iterator<const_iterator> const_reverse_iterator;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
     /**
      * Address: 0x00685900 (FUN_00685900 -- `list<T>::list()` for a 12-byte node: buys the self-linked head (0x006866E0

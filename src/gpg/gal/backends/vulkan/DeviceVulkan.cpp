@@ -19,9 +19,12 @@
 #include "platform/posix/dxc/DxcGlue.h"
 #endif
 
+#include "gpg/core/utils/Global.h"
 #include "gpg/core/utils/Logging.h"
 #include "gpg/gal/backends/common/BackendErrors.h"
+#include "gpg/gal/backends/common/BlockCompression.h"
 #include "gpg/gal/backends/common/ImageCodec.h"
+#include "gpg/gal/backends/common/ImageCodecDirectXTex.h"
 #include "gpg/gal/backends/common/RuntimeInfo.h"
 #include "gpg/gal/backends/d3d11/D3D11VertexLayouts.h"
 #include "gpg/gal/backends/d3d11/EffectSourceD3D11.h"
@@ -37,6 +40,7 @@
 #include "gpg/gal/effects/RayTracedShadows.h"
 #include "gpg/gal/effects/ShadowCascades.h"
 #include "gpg/gal/effects/TextureFiltering.h"
+#include "gpg/gal/Error.hpp"
 #include "gpg/gal/Head.hpp"
 #include "gpg/gal/IndexBufferContext.hpp"
 #include "gpg/gal/PipelineDefer.h"
@@ -44,8 +48,11 @@
 #include "gpg/gal/RenderTargetContext.hpp"
 #include "gpg/gal/TextureContext.h"
 #include "gpg/gal/VertexBufferContext.hpp"
+#include "VulkanFrameFailure.h"
 #include "VulkanAttachmentBarrier.h"
+#include "VulkanLimits.h"
 #include "VulkanSurface.h"
+#include "VulkanSwapChain.h"
 
 namespace gpg::gal
 {
@@ -123,7 +130,7 @@ namespace gpg::gal
       };
       lower(commandLine);
       lower(needle);
-      return commandLine.find(needle) != std::string::npos;
+      return commandLine.contains(needle);
     }
 
     [[nodiscard]] bool IsRgbaTexture(
@@ -477,7 +484,7 @@ namespace gpg::gal
     } else {
       for (SwapChain& swapChain : mSwapChains) {
         if (swapChain.surface != VK_NULL_HANDLE && mInstance != VK_NULL_HANDLE) {
-          Vk().vkDestroySurfaceKHR(mInstance, swapChain.surface, nullptr);
+          vulkan::DestroyWindowSurface(mInstance, swapChain.surface);
         }
       }
       mSwapChains.clear();
@@ -503,6 +510,21 @@ namespace gpg::gal
     }
 
     std::vector<const char*> extensions{VK_KHR_SURFACE_EXTENSION_NAME, vulkan::PlatformSurfaceExtension()};
+    // A Vulkan loader lists portability drivers (MoltenVK on macOS) only to an instance that asks for
+    // them. MoltenVK loaded directly doesn't offer the extension and lists itself anyway.
+    VkInstanceCreateFlags instanceFlags = 0;
+    {
+      std::uint32_t count = 0U;
+      Vk().vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr);
+      std::vector<VkExtensionProperties> available(count);
+      Vk().vkEnumerateInstanceExtensionProperties(nullptr, &count, available.data());
+      for (const VkExtensionProperties& extension : available) {
+        if (std::strcmp(extension.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0) {
+          extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+          instanceFlags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+        }
+      }
+    }
     std::vector<const char*> layers;
     const bool debug = CommandLineHas("/vulkandebug");
     if (debug) {
@@ -528,6 +550,7 @@ namespace gpg::gal
     application.apiVersion = VK_API_VERSION_1_3;
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    info.flags = instanceFlags;
     info.pApplicationInfo = &application;
     info.enabledExtensionCount = static_cast<std::uint32_t>(extensions.size());
     info.ppEnabledExtensionNames = extensions.data();
@@ -671,17 +694,29 @@ namespace gpg::gal
     features.pNext = &features12;
     features.features.samplerAnisotropy = available.features.samplerAnisotropy;
     features.features.fillModeNonSolid = available.features.fillModeNonSolid;
-    features.features.textureCompressionBC = available.features.textureCompressionBC;
+    // Without BC textures (phones' GPUs mostly: the Galaxy S22's Xclipse 920 has ETC2 and ASTC), BC1 to BC3,
+    // the game's DXT1 to DXT5, are held as R8G8B8A8 and decoded on the CPU (CreateTexture). Diagnostics:
+    // FAF_GAL_NO_BC=1 takes that route on a device that has them, which is then made without them.
+    const char* const noBc = std::getenv("FAF_GAL_NO_BC");
+    mBlockCompression = available.features.textureCompressionBC == VK_TRUE && (noBc == nullptr || noBc[0] != '1');
+    features.features.textureCompressionBC = mBlockCompression ? VK_TRUE : VK_FALSE;
     features.features.tessellationShader = available.features.tessellationShader;
     mAnisotropy = available.features.samplerAnisotropy == VK_TRUE;
     mWireframeSupported = available.features.fillModeNonSolid == VK_TRUE;
     mTessellationSupported = available.features.tessellationShader == VK_TRUE;
-    if (available.features.textureCompressionBC != VK_TRUE) {
-      ThrowError("DeviceVulkan.cpp", __LINE__, "the Vulkan device has no BC texture compression");
+    if (!mBlockCompression) {
+      gpg::Logf(
+        "Vulkan: no BC textures%s: BC1 to BC3 textures decode on the CPU, other BC formats don't load",
+        (available.features.textureCompressionBC == VK_TRUE) ? " (FAF_GAL_NO_BC)" : ""
+      );
     }
     // A software rasterizer (llvmpipe, as in a virtual machine without 3D, issue #256) gets no ray
     // queries below: ray-traced shadows would trace on the CPU that already rasterizes every pixel.
     const bool softwareDevice = mProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU;
+    // A rasterizer state's depth bias clamp needs the feature; without it a pipeline's clamp must be 0
+    // (CreatePipeline). Desktop GPUs have it, a phone's need not.
+    features.features.depthBiasClamp = available.features.depthBiasClamp;
+    mDepthBiasClamp = available.features.depthBiasClamp == VK_TRUE;
 
     const float priority = 1.0f;
     VkDeviceQueueCreateInfo queue{};
@@ -710,6 +745,11 @@ namespace gpg::gal
       }
       );
     };
+    // A device that implements Vulkan only in part (MoltenVK) names its gaps through this extension,
+    // which the specification requires an application to enable when the device offers it.
+    if (hasExtension("VK_KHR_portability_subset")) {
+      extensions.push_back("VK_KHR_portability_subset");
+    }
     VkPhysicalDeviceRayQueryFeaturesKHR rayQueryFeatures{};
     rayQueryFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_QUERY_FEATURES_KHR;
     rayQueryFeatures.rayQuery = VK_TRUE;
@@ -854,8 +894,24 @@ namespace gpg::gal
       layout.bindingCount = 5U;
       layout.pBindings = scene;
       CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkCreateDescriptorSetLayout(mDevice, &layout, nullptr, &mRayLayout));
+      mRaySceneBindings.assign(std::begin(scene), std::end(scene));
       layout.bindingCount = 1U;
       layout.pBindings = &constants;
+    } else {
+      mRaySceneBindings.clear();
+    }
+    // Set 0 gives every stage all of an effect's texture and sampler slots, and the ray-traced scene 64 textures
+    // more, where Vulkan promises a stage only 16 of each; desktop GPUs have hundreds. A layout beyond the device's
+    // limits is invalid, which a driver need not refuse, nor say why when it does: this names the limit. The layout
+    // is made all the same, as the effects draw with no other.
+    const std::string beyond = vulkan::LayoutBeyondLimits(
+      mProperties.limits,
+      {{bindings.data(), static_cast<std::uint32_t>(bindings.size())},
+       {&constants, 1U},
+       {mRaySceneBindings.data(), static_cast<std::uint32_t>(mRaySceneBindings.size())}}
+    );
+    if (!beyond.empty()) {
+      gpg::Warnf("Vulkan: the effects' pipeline layout holds %s", beyond.c_str());
     }
     const std::uint32_t setCount = mRayQuery ? 3U : 2U;
     const VkDescriptorSetLayout sets[3] = {mTextureLayout, mConstantLayout, mRayLayout};
@@ -959,16 +1015,30 @@ namespace gpg::gal
     Vk().vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysical, swapChain.surface, &count, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(count);
     Vk().vkGetPhysicalDeviceSurfaceFormatsKHR(mPhysical, swapChain.surface, &count, formats.data());
-    VkSurfaceFormatKHR chosen = formats.empty()
-      ? VkSurfaceFormatKHR{VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR}
-      : formats.front();
-    for (const VkSurfaceFormatKHR& format : formats) {
-      if (format.format == VK_FORMAT_B8G8R8A8_UNORM && format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
-        chosen = format;
-      }
+    // Android's window surfaces have R8G8B8A8 where desktop ones have B8G8R8A8. Diagnostics: FAF_GAL_NO_BGRA=1
+    // leaves B8G8R8A8 out, which takes Android's route on a desktop surface that has both.
+    static const bool noBgra = [] {
+      const char* const value = std::getenv("FAF_GAL_NO_BGRA");
+      return value != nullptr && value[0] == '1';
+    }();
+    const VkSurfaceFormatKHR chosen = vulkan::ChooseSurfaceFormat(formats, !noBgra);
+    if (chosen.format == VK_FORMAT_UNDEFINED) {
+      ThrowError(
+        "DeviceVulkan.cpp",
+        __LINE__,
+        noBgra ? "the window surface has no R8G8B8A8_UNORM format, and FAF_GAL_NO_BGRA leaves B8G8R8A8_UNORM out"
+               : "the window surface has neither B8G8R8A8_UNORM nor R8G8B8A8_UNORM"
+      );
     }
-    if (chosen.format != VK_FORMAT_B8G8R8A8_UNORM) {
-      ThrowError("DeviceVulkan.cpp", __LINE__, "the window surface has no B8G8R8A8_UNORM format");
+    // A swap chain may ask only for usage its surface supports; the engine draws into, copies from and into, and
+    // samples a back buffer.
+    const VkImageUsageFlags missingUsage = vulkan::MissingSwapChainUsage(capabilities);
+    if (missingUsage != 0U) {
+      char message[128]{};
+      std::snprintf(
+        message, sizeof(message), "the window surface lacks image usage 0x%X, which the back buffer needs", missingUsage
+      );
+      ThrowError("DeviceVulkan.cpp", __LINE__, message);
     }
     Vk().vkGetPhysicalDeviceSurfacePresentModesKHR(mPhysical, swapChain.surface, &count, nullptr);
     std::vector<VkPresentModeKHR> modes(count);
@@ -989,14 +1059,7 @@ namespace gpg::gal
                                                        : "immediate";
     };
 
-    VkExtent2D extent{width, height};
-    if (capabilities.currentExtent.width != 0xFFFFFFFFU) {
-      extent = capabilities.currentExtent;
-    }
-    extent.width =
-      std::clamp(extent.width, capabilities.minImageExtent.width, std::max(capabilities.maxImageExtent.width, 1U));
-    extent.height =
-      std::clamp(extent.height, capabilities.minImageExtent.height, std::max(capabilities.maxImageExtent.height, 1U));
+    const VkExtent2D extent = vulkan::SwapChainExtent(capabilities, width, height);
 
     VkSwapchainCreateInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -1009,11 +1072,10 @@ namespace gpg::gal
     info.imageColorSpace = chosen.colorSpace;
     info.imageExtent = extent;
     info.imageArrayLayers = 1U;
-    info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.imageUsage = vulkan::kSwapChainUsage;
     info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    info.preTransform = capabilities.currentTransform;
-    info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    info.preTransform = vulkan::SwapChainPreTransform(capabilities);
+    info.compositeAlpha = vulkan::SwapChainCompositeAlpha(capabilities);
     info.clipped = VK_TRUE;
     info.oldSwapchain = swapChain.swapchain;
     VkSwapchainKHR created = VK_NULL_HANDLE;
@@ -1041,6 +1103,7 @@ namespace gpg::gal
     swapChain.format = chosen.format;
     swapChain.extent = extent;
     swapChain.presentMode = mode;
+    swapChain.preTransform = info.preTransform;
     Vk().vkGetSwapchainImagesKHR(mDevice, created, &count, nullptr);
     swapChain.images.resize(count);
     Vk().vkGetSwapchainImagesKHR(mDevice, created, &count, swapChain.images.data());
@@ -1055,7 +1118,14 @@ namespace gpg::gal
     }
     swapChain.hasImage = false;
     swapChain.stale = false;
-    gpg::Logf("Vulkan: swap chain %ux%u, %u images, %s", extent.width, extent.height, count, modeName(mode));
+    gpg::Logf(
+      "Vulkan: swap chain %ux%u, %u images, %s, %s",
+      extent.width,
+      extent.height,
+      count,
+      (chosen.format == VK_FORMAT_B8G8R8A8_UNORM) ? "B8G8R8A8" : "R8G8B8A8",
+      modeName(mode)
+    );
   }
 
   void DeviceVulkan::DestroySwapChain(
@@ -1074,9 +1144,24 @@ namespace gpg::gal
     swapChain.images.clear();
     swapChain.hasImage = false;
     if (!keepSurface && swapChain.surface != VK_NULL_HANDLE) {
-      Vk().vkDestroySurfaceKHR(mInstance, swapChain.surface, nullptr);
+      vulkan::DestroyWindowSurface(mInstance, swapChain.surface);
       swapChain.surface = VK_NULL_HANDLE;
+      swapChain.surfaceLost = false;
     }
+  }
+
+  void DeviceVulkan::TakeSurface(
+    SwapChain& swapChain
+  )
+  {
+    // A window can be without a surface (an Android activity in the back): it is waited for, and may go
+    // again before it is taken.
+    VkResult result = VK_SUCCESS;
+    do {
+      vulkan::WaitForWindowSurface(swapChain.window);
+      swapChain.surface = vulkan::CreateWindowSurface(mInstance, swapChain.window, result);
+    } while (result == VK_ERROR_SURFACE_LOST_KHR);
+    CheckVk("DeviceVulkan.cpp", __LINE__, result);
   }
 
   void DeviceVulkan::CreateSwapChains(
@@ -1093,7 +1178,21 @@ namespace gpg::gal
         width = static_cast<std::uint32_t>(std::max<LONG>(client.right - client.left, 1));
         height = static_cast<std::uint32_t>(std::max<LONG>(client.bottom - client.top, 1));
       }
-      CreateSwapChain(mSwapChains[static_cast<std::size_t>(headIndex)], width, height);
+      // A surface that went since Setup took it (an Android activity's first can be the one before it turned)
+      // is waited out as the first was. Any other failure stands.
+      SwapChain& swapChain = mSwapChains[static_cast<std::size_t>(headIndex)];
+      for (;;) {
+        try {
+          CreateSwapChain(swapChain, width, height);
+          break;
+        } catch (const Error&) {
+          if (vulkan::WindowSurfaceIsCurrent(swapChain.window)) {
+            throw;
+          }
+          DestroySwapChain(swapChain, false);
+          TakeSurface(swapChain);
+        }
+      }
     }
     VkSemaphoreCreateInfo semaphore{};
     semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -1111,7 +1210,11 @@ namespace gpg::gal
   )
   {
     VkSurfaceCapabilitiesKHR capabilities{};
-    if (Vk().vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysical, swapChain.surface, &capabilities) != VK_SUCCESS) {
+    const VkResult queried =
+      Vk().vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysical, swapChain.surface, &capabilities);
+    if (queried != VK_SUCCESS) {
+      // A surface that went: TestCooperativeLevel lets go of it and takes the next.
+      swapChain.surfaceLost = swapChain.surfaceLost || queried == VK_ERROR_SURFACE_LOST_KHR;
       return false;
     }
     // A minimised window reports no area, and a swap chain can't be made for it: wait until it has one.
@@ -1123,7 +1226,17 @@ namespace gpg::gal
     Vk().vkDeviceWaitIdle(mDevice);
     CollectCompleted();
     const VkExtent2D before = swapChain.extent;
-    CreateSwapChain(swapChain, swapChain.extent.width, swapChain.extent.height);
+    try {
+      CreateSwapChain(swapChain, swapChain.extent.width, swapChain.extent.height);
+    } catch (const Error& error) {
+      // The surface can be going (an Android activity on its way to the back), and a failed create has retired
+      // the old swap chain: the head gives that up, and TestCooperativeLevel lets go of the surface as of one
+      // that went and takes the next one, or ends the program if this one stays and keeps refusing.
+      gpg::Warnf("Vulkan: the swap chain could not be made again for the window (%s)", error.what());
+      DestroySwapChain(swapChain, true);
+      swapChain.surfaceLost = true;
+      return false;
+    }
     gpg::Logf(
       "Vulkan: swap chain made again for the window, %ux%u -> %ux%u (the head stays %ux%u)",
       before.width,
@@ -1134,6 +1247,15 @@ namespace gpg::gal
       swapChain.headHeight
     );
     return true;
+  }
+
+  bool DeviceVulkan::SuboptimalSwapChainIsStale(
+    const SwapChain& swapChain
+  )
+  {
+    VkSurfaceCapabilitiesKHR capabilities{};
+    return Vk().vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysical, swapChain.surface, &capabilities) != VK_SUCCESS ||
+      vulkan::RemakeSuboptimalSwapChain(capabilities, swapChain.preTransform, swapChain.extent);
   }
 
   void DeviceVulkan::CopyHeadToSwapChain(
@@ -1211,6 +1333,35 @@ namespace gpg::gal
     return buffer;
   }
 
+  std::vector<RenderTargetVulkan::Buffer> DeviceVulkan::SwapChainBuffers(
+    const SwapChain& swapChain
+  )
+  {
+    RenderTargetVulkan::Buffer blank;
+    blank.image.owned = false;
+    blank.image.format = swapChain.format;
+    blank.image.width = swapChain.extent.width;
+    blank.image.height = swapChain.extent.height;
+    blank.image.layout = VK_IMAGE_LAYOUT_UNDEFINED;
+    std::vector<RenderTargetVulkan::Buffer> buffers;
+    for (const VkImage image : swapChain.images) {
+      RenderTargetVulkan::Buffer buffer = blank;
+      buffer.image.image = image;
+      VkImageViewCreateInfo view{};
+      view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+      view.image = image;
+      view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+      view.format = swapChain.format;
+      view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, 1U};
+      CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkCreateImageView(mDevice, &view, nullptr, &buffer.view));
+      buffers.push_back(buffer);
+    }
+    if (buffers.empty()) {
+      buffers.push_back(blank);
+    }
+    return buffers;
+  }
+
   void DeviceVulkan::CreateRenderTargets()
   {
     mHeadOutputContexts.clear();
@@ -1227,26 +1378,8 @@ namespace gpg::gal
       std::vector<RenderTargetVulkan::Buffer> buffers;
       if (swapChain.scaled) {
         buffers.push_back(CreateColorTargetImage(swapChain.format, swapChain.headWidth, swapChain.headHeight));
-      }
-      for (const VkImage image : swapChain.images) {
-        if (swapChain.scaled) {
-          break;
-        }
-        RenderTargetVulkan::Buffer buffer;
-        buffer.image.image = image;
-        buffer.image.owned = false;
-        buffer.image.format = swapChain.format;
-        buffer.image.width = swapChain.extent.width;
-        buffer.image.height = swapChain.extent.height;
-        buffer.image.layout = VK_IMAGE_LAYOUT_UNDEFINED;
-        VkImageViewCreateInfo view{};
-        view.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        view.image = image;
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        view.format = swapChain.format;
-        view.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0U, 1U, 0U, 1U};
-        CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkCreateImageView(mDevice, &view, nullptr, &buffer.view));
-        buffers.push_back(buffer);
+      } else {
+        buffers = SwapChainBuffers(swapChain);
       }
       OutputContext& output = mHeadOutputContexts[headIndex];
       auto* const target =
@@ -1298,8 +1431,9 @@ namespace gpg::gal
     mDeviceContext.mVertexShaderProfile = 4;
     mDeviceContext.mPixelShaderProfile = 8;
 
+    // A format's textures as the device holds them: without BC textures, BC1 to BC3 as R8G8B8A8.
     const auto supports = [&](const DXGI_FORMAT format, const VkFormatFeatureFlags wanted) {
-      const vulkan::TextureFormat mapped = vulkan::ToVulkanTexture(format);
+      const vulkan::TextureFormat mapped = vulkan::HeldTextureFormat(format, mBlockCompression);
       if (mapped.format == VK_FORMAT_UNDEFINED) {
         return false;
       }
@@ -1358,12 +1492,11 @@ namespace gpg::gal
 
     CreateInstance();
     mSwapChains.resize(static_cast<std::size_t>(context->GetHeadCount()));
+    mSurfaceLifecycle.SetHeadCount(mSwapChains.size());
     for (int headIndex = 0; headIndex < context->GetHeadCount(); ++headIndex) {
       SwapChain& swapChain = mSwapChains[static_cast<std::size_t>(headIndex)];
       swapChain.window = context->GetHead(static_cast<std::uint32_t>(headIndex)).mWindow;
-      VkResult result = VK_SUCCESS;
-      swapChain.surface = vulkan::CreateWindowSurface(mInstance, swapChain.window, result);
-      CheckVk("DeviceVulkan.cpp", __LINE__, result);
+      TakeSurface(swapChain);
     }
     PickPhysicalDevice(context->mAdapter);
     CreateLogicalDevice();
@@ -1393,6 +1526,7 @@ namespace gpg::gal
     if (GetRuntimeInfo(runtimeInfo)) {
       common::LogRuntimeInfo("Vulkan", runtimeInfo);
     }
+    mSetUp = true;
   }
 
   bool DeviceVulkan::GetRuntimeInfo(
@@ -1469,6 +1603,23 @@ namespace gpg::gal
   // ---------------------------------------------------------------------------
   // Submission
 
+  void DeviceVulkan::CheckFrame(
+    const int line,
+    const VkResult result,
+    const char* const during
+  )
+  {
+    switch (vulkan::JudgeFrameResult(result, mSetUp)) {
+    case vulkan::FrameFailure::None:
+      return;
+    case vulkan::FrameFailure::Throw:
+      CheckVk("DeviceVulkan.cpp", line, result);
+      return;
+    case vulkan::FrameFailure::End:
+      gpg::Die("%s", vulkan::FrameEndMessage(result, vulkan::ResultName(result), during, line).c_str());
+    }
+  }
+
   void DeviceVulkan::BeginCommandBuffer()
   {
     Frame& frame = mFrames[mFrameIndex];
@@ -1479,14 +1630,14 @@ namespace gpg::gal
       info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
       info.commandBufferCount = 1U;
       VkCommandBuffer buffer = VK_NULL_HANDLE;
-      CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkAllocateCommandBuffers(mDevice, &info, &buffer));
+      CheckFrame(__LINE__, Vk().vkAllocateCommandBuffers(mDevice, &info, &buffer), "allocating a command buffer");
       frame.buffers.push_back(buffer);
     }
     mCommands = frame.buffers[frame.used++];
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkBeginCommandBuffer(mCommands, &begin));
+    CheckFrame(__LINE__, Vk().vkBeginCommandBuffer(mCommands, &begin), "beginning a command buffer");
     mViewportDirty = true;
   }
 
@@ -1496,7 +1647,7 @@ namespace gpg::gal
   )
   {
     EndRendering();
-    CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkEndCommandBuffer(mCommands));
+    CheckFrame(__LINE__, Vk().vkEndCommandBuffer(mCommands), "ending a command buffer");
 
     std::vector<VkSemaphoreSubmitInfo> waits;
     std::vector<VkSemaphoreSubmitInfo> signals;
@@ -1538,7 +1689,7 @@ namespace gpg::gal
     submit.pCommandBufferInfos = &commands;
     submit.signalSemaphoreInfoCount = static_cast<std::uint32_t>(signals.size());
     submit.pSignalSemaphoreInfos = signals.data();
-    CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkQueueSubmit2(mQueue, 1U, &submit, VK_NULL_HANDLE));
+    CheckFrame(__LINE__, Vk().vkQueueSubmit2(mQueue, 1U, &submit, VK_NULL_HANDLE), "submitting");
     frame.serial = serial;
     // Waited once; later submissions of the frame need not wait again.
     for (SwapChain& swapChain : mSwapChains) {
@@ -1552,8 +1703,22 @@ namespace gpg::gal
       mDynamicConstants = gVulkanDynamicConstants;
     }
     // A submission in the middle of a pass (an upload between BeginPass and
-    // the draw) leaves the pass's draws for the next command buffer.
-    CarryBoundPass();
+    // the draw) leaves the pass's draws for the next command buffer. Its upload memory and set are taken before
+    // that one is begun: once the device is set up, a failure there ends the program, as the next frame would
+    // record into the command buffer just submitted (CheckFrame).
+    try {
+      CarryBoundPass();
+    } catch (const Error& error) {
+      if (!mSetUp) {
+        throw;
+      }
+      gpg::Die(
+        "Vulkan: %s while carrying a pass into the next command buffer (%s(%d)), so the game cannot continue.",
+        error.what(),
+        error.GetFile(),
+        error.GetLine()
+      );
+    }
     CollectCompleted();
     if (!present) {
       BeginCommandBuffer();
@@ -1572,7 +1737,7 @@ namespace gpg::gal
     info.semaphoreCount = 1U;
     info.pSemaphores = &mTimeline;
     info.pValues = &serial;
-    CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkWaitSemaphores(mDevice, &info, ~0ULL));
+    CheckFrame(__LINE__, Vk().vkWaitSemaphores(mDevice, &info, ~0ULL), "waiting for a submission");
   }
 
   void DeviceVulkan::CollectCompleted()
@@ -1636,16 +1801,22 @@ namespace gpg::gal
       if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
         swapChain.hasImage = true;
         swapChain.acquireWaitPending = true;
-        // Suboptimal still presents this image; the swap chain is made again before the next acquire.
+        // Suboptimal still presents this image. The swap chain is made again before the next acquire, unless a new
+        // one would take its size and pre-transform again and that pre-transform is not the surface's current
+        // transform (RemakeSuboptimalSwapChain).
         if (result == VK_SUBOPTIMAL_KHR && swapChain.scaled) {
-          swapChain.stale = true;
+          swapChain.stale = swapChain.stale || SuboptimalSwapChainIsStale(swapChain);
         }
       } else if (result == VK_ERROR_OUT_OF_DATE_KHR && swapChain.scaled) {
         swapChain.stale = true;
+      } else if (result == VK_ERROR_DEVICE_LOST) {
+        CheckFrame(__LINE__, result, "acquiring a swap-chain image");
       } else {
         gpg::Warnf(
           "Vulkan: acquiring head %u's image failed (%s)", static_cast<unsigned>(index), vulkan::ResultName(result)
         );
+        // A surface that went: TestCooperativeLevel lets go of it and takes the next.
+        swapChain.surfaceLost = swapChain.surfaceLost || result == VK_ERROR_SURFACE_LOST_KHR;
       }
     }
   }
@@ -1655,6 +1826,13 @@ namespace gpg::gal
   )
   {
     return (swapChain < mSwapChains.size()) ? mSwapChains[swapChain].acquired : 0U;
+  }
+
+  bool DeviceVulkan::HasAcquiredImage(
+    const std::uint32_t swapChain
+  ) const noexcept
+  {
+    return swapChain < mSwapChains.size() && mSwapChains[swapChain].hasImage;
   }
 
   vulkan::UploadAllocation DeviceVulkan::AllocateUpload(
@@ -1706,6 +1884,24 @@ namespace gpg::gal
     barrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT;
     barrier.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
     barrier.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+    VkDependencyInfo dependency{};
+    dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.memoryBarrierCount = 1U;
+    dependency.pMemoryBarriers = &barrier;
+    Vk().vkCmdPipelineBarrier2(mCommands, &dependency);
+  }
+
+  void DeviceVulkan::HostReadBarrier()
+  {
+    // Waiting for the submission on the host does not make the device's writes visible to it: the wait's
+    // scope covers only device accesses (the specification's "host access types"). A GPU whose caches a
+    // submission's end does not flush, as a phone's can be, would hand the host stale bytes without this.
+    VkMemoryBarrier2 barrier{};
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    barrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+    barrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    barrier.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+    barrier.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
     VkDependencyInfo dependency{};
     dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     dependency.memoryBarrierCount = 1U;
@@ -1879,9 +2075,16 @@ namespace gpg::gal
     const std::uint32_t height = std::max(1U, destination.height >> level);
     const std::uint32_t depth = std::max(1U, destination.depth >> level);
     const dxgi::LevelLayout layout = dxgi::ComputeLevelLayout(format, width, height);
-    const VkDeviceSize bytes = static_cast<VkDeviceSize>(layout.ByteSize()) * depth;
+    // BC data for an R8G8B8A8 image goes up as the texels a device with BC textures samples.
+    const bool decoded = vulkan::DecodedOnCpu(format, destination.format);
+    const VkDeviceSize bytes =
+      decoded ? static_cast<VkDeviceSize>(width) * height * 4U : static_cast<VkDeviceSize>(layout.ByteSize()) * depth;
     const vulkan::UploadAllocation upload = AllocateUpload(bytes, 16U);
-    std::memcpy(upload.cpu, data, static_cast<std::size_t>(bytes));
+    if (decoded) {
+      imaging::DecodeBc123(format, data, layout.rowPitch, width, height, upload.cpu);
+    } else {
+      std::memcpy(upload.cpu, data, static_cast<std::size_t>(bytes));
+    }
     EndRendering();
     TransitionForTransferWrite(destination);
     VkBufferImageCopy region{};
@@ -1905,10 +2108,12 @@ namespace gpg::gal
     const std::uint32_t width = std::max(1U, source.width >> level);
     const std::uint32_t height = std::max(1U, source.height >> level);
     const dxgi::LevelLayout layout = dxgi::ComputeLevelLayout(format, width, height);
+    // BC data an R8G8B8A8 image holds comes back compressed again (lossy, as D3DX would compress it).
+    const bool decoded = vulkan::DecodedOnCpu(format, source.format);
     vulkan::TrackedBuffer readback;
     VkBufferCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    info.size = layout.ByteSize();
+    info.size = decoded ? static_cast<VkDeviceSize>(width) * height * 4U : layout.ByteSize();
     info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkCreateBuffer(mDevice, &info, nullptr, &readback.buffer));
     VkMemoryRequirements requirements{};
@@ -1929,10 +2134,20 @@ namespace gpg::gal
     Vk().vkCmdCopyImageToBuffer(
       mCommands, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback.buffer, 1U, &region
     );
+    HostReadBarrier();
     Submit(true, false);
-    bytes.assign(readback.memory.mapped, readback.memory.mapped + layout.ByteSize());
+    HRESULT encoded = S_OK;
+    if (decoded) {
+      bytes.resize(layout.ByteSize());
+      encoded = imaging::EncodeBc123WithDirectXTex(
+        format, readback.memory.mapped, width, height, bytes.data(), layout.rowPitch
+      );
+    } else {
+      bytes.assign(readback.memory.mapped, readback.memory.mapped + layout.ByteSize());
+    }
     Vk().vkDestroyBuffer(mDevice, readback.buffer, nullptr);
     mMemory.Free(readback.memory);
+    CheckHresult("DeviceVulkan.cpp", __LINE__, encoded);
   }
 
   void DeviceVulkan::ReadImage(
@@ -1942,6 +2157,9 @@ namespace gpg::gal
   )
   {
     const std::lock_guard<std::recursive_mutex> lock(mMutex);
+    if (source.image == VK_NULL_HANDLE) {
+      ThrowError("DeviceVulkan.cpp", __LINE__, "the back buffer has no image (the window has no surface)");
+    }
     image.Allocate(format, source.width, source.height, source.mipLevels, source.layers);
     for (std::uint32_t layer = 0U; layer < source.layers; ++layer) {
       for (std::uint32_t level = 0U; level < source.mipLevels; ++level) {
@@ -1953,6 +2171,12 @@ namespace gpg::gal
           bytes.data(),
           std::min<std::size_t>(bytes.size(), subresource.slicePitch)
         );
+      }
+    }
+    // A back buffer of an R8G8B8A8 swap chain (CreateSwapChain), read as the engine's B8G8R8A8.
+    if (vulkan::OtherChannelOrder(source.format, vulkan::ToVulkanTexture(format).format)) {
+      for (std::size_t pixel = 0U; pixel + 3U < image.bytes.size(); pixel += 4U) {
+        std::swap(image.bytes[pixel], image.bytes[pixel + 2U]);
       }
     }
   }
@@ -2003,11 +2227,25 @@ namespace gpg::gal
     }
     auto* const target = static_cast<RenderTargetVulkan*>(outputContext_.surface.get());
     RenderTargetVulkan::Buffer& buffer = target->Current();
+    // A back buffer whose head has no image (TestCooperativeLevel, a failed acquire): what would draw into it
+    // draws into none, as a lost Direct3D 9 device's draws do nothing. The draws are left out
+    // (TargetIsImagelessBackBuffer); a clear clears the depth target alone.
+    if (buffer.view == VK_NULL_HANDLE) {
+      format = VK_FORMAT_UNDEFINED;
+      image = nullptr;
+      return VK_NULL_HANDLE;
+    }
     format = buffer.image.format;
     image = &buffer.image;
     width = buffer.image.width;
     height = buffer.image.height;
     return buffer.view;
+  }
+
+  bool DeviceVulkan::TargetIsImagelessBackBuffer()
+  {
+    return outputContext_.surface != nullptr &&
+      static_cast<RenderTargetVulkan*>(outputContext_.surface.get())->Current().view == VK_NULL_HANDLE;
   }
 
   void DeviceVulkan::EndRendering()
@@ -2295,10 +2533,23 @@ namespace gpg::gal
     } else {
       ThrowError("DeviceVulkan.cpp", __LINE__, "invalid source specified for texture data");
     }
-    const vulkan::TextureFormat format = vulkan::ToVulkanTexture(dxgiFormat);
+    // A device without BC textures (CreateLogicalDevice) holds BC1 to BC3 as R8G8B8A8, which the uploads
+    // decode into (UploadImageLevel); the engine still sees the BC format and its bytes.
+    const vulkan::TextureFormat format = vulkan::HeldTextureFormat(dxgiFormat, mBlockCompression);
     if (format.format == VK_FORMAT_UNDEFINED) {
       char message[128]{};
       std::snprintf(message, sizeof(message), "unsupported texture format (DXGI %d)", static_cast<int>(dxgiFormat));
+      ThrowError("DeviceVulkan.cpp", __LINE__, message);
+    }
+    if (!mBlockCompression && dxgi::IsBlockCompressed(dxgiFormat) && (!imaging::IsBc123(dxgiFormat) || depth > 1U)) {
+      char message[640]{};
+      std::snprintf(
+        message,
+        sizeof(message),
+        "texture %s is BC compressed (DXGI %d), which this device cannot sample",
+        context->location_.c_str(),
+        static_cast<int>(dxgiFormat)
+      );
       ThrowError("DeviceVulkan.cpp", __LINE__, message);
     }
 
@@ -2486,6 +2737,10 @@ namespace gpg::gal
     const bool scale
   )
   {
+    // A back buffer whose head has no image (TestCooperativeLevel): nothing to copy from or into.
+    if (source.image == VK_NULL_HANDLE || destination.image == VK_NULL_HANDLE) {
+      return;
+    }
     EndRendering();
     Transition(source, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     TransitionForTransferWrite(destination);
@@ -2504,15 +2759,45 @@ namespace gpg::gal
         region.dstOffset = {destinationRect->left, destinationRect->top, 0};
       }
       region.extent = {width, height, 1U};
-      Vk().vkCmdCopyImage(
-        mCommands,
-        source.image,
-        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        destination.image,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        1U,
-        &region
-      );
+      if (vulkan::OtherChannelOrder(source.format, destination.format)) {
+        // A back buffer of an R8G8B8A8 swap chain (CreateSwapChain) and a B8G8R8A8 image: vkCmdCopyImage would
+        // copy the bits, a blit of the same size puts the channels in order.
+        VkImageBlit blit{};
+        blit.srcSubresource = region.srcSubresource;
+        blit.dstSubresource = region.dstSubresource;
+        blit.srcOffsets[0] = region.srcOffset;
+        blit.srcOffsets[1] = {
+          region.srcOffset.x + static_cast<std::int32_t>(width),
+          region.srcOffset.y + static_cast<std::int32_t>(height),
+          1
+        };
+        blit.dstOffsets[0] = region.dstOffset;
+        blit.dstOffsets[1] = {
+          region.dstOffset.x + static_cast<std::int32_t>(width),
+          region.dstOffset.y + static_cast<std::int32_t>(height),
+          1
+        };
+        Vk().vkCmdBlitImage(
+          mCommands,
+          source.image,
+          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+          destination.image,
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          1U,
+          &blit,
+          VK_FILTER_NEAREST
+        );
+      } else {
+        Vk().vkCmdCopyImage(
+          mCommands,
+          source.image,
+          VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+          destination.image,
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+          1U,
+          &region
+        );
+      }
     } else {
       // A stretch of the source rect over the destination rect, linear
       // filtered; a null rect is the whole image.
@@ -2770,6 +3055,9 @@ namespace gpg::gal
     Vk().vkDeviceWaitIdle(mDevice);
     CollectCompleted();
     for (std::size_t headIndex = 0U; headIndex < mSwapChains.size(); ++headIndex) {
+      if (mSwapChains[headIndex].surface == VK_NULL_HANDLE) {
+        continue; // TestCooperativeLevel gives it a swap chain with its next surface
+      }
       Head& head = mDeviceContext.GetHead(static_cast<std::uint32_t>(headIndex));
       std::uint32_t width = head.mWidth;
       std::uint32_t height = head.mHeight;
@@ -2779,7 +3067,14 @@ namespace gpg::gal
         width = static_cast<std::uint32_t>(std::max<LONG>(client.right - client.left, 1));
         height = static_cast<std::uint32_t>(std::max<LONG>(client.bottom - client.top, 1));
       }
-      CreateSwapChain(mSwapChains[headIndex], width, height);
+      try {
+        CreateSwapChain(mSwapChains[headIndex], width, height);
+      } catch (const Error& error) {
+        // The surface can be going (an Android activity on its way to the back): TestCooperativeLevel takes
+        // the next one, or ends the program if this one stays and keeps refusing.
+        gpg::Warnf("Vulkan: head %u's swap chain failed (%s)", static_cast<unsigned>(headIndex), error.what());
+        DestroySwapChain(mSwapChains[headIndex], false);
+      }
     }
     // The acquire semaphores of the old images may be signalled: start the frame over.
     Submit(true, false);
@@ -2793,9 +3088,130 @@ namespace gpg::gal
     Reset(&mDeviceContext);
   }
 
+  void DeviceVulkan::RebindSwapChainImages(
+    const std::size_t headIndex
+  )
+  {
+    auto* const target = static_cast<RenderTargetVulkan*>(mHeadOutputContexts[headIndex].surface.get());
+    for (RenderTargetVulkan::Buffer& buffer : target->Buffers()) {
+      Retire(buffer.image, buffer.view);
+    }
+    target->Buffers() = SwapChainBuffers(mSwapChains[headIndex]);
+  }
+
+  void DeviceVulkan::ReleaseSurface(
+    const std::size_t headIndex
+  )
+  {
+    SwapChain& swapChain = mSwapChains[headIndex];
+    // What is recorded goes to the GPU, unshown; it waits for the acquired image, whose semaphore is then free
+    // for the next swap chain. A head that draws into the swap chain's images gives them up first.
+    swapChain.hasImage = false;
+    if (!swapChain.scaled) {
+      swapChain.images.clear();
+      RebindSwapChainImages(headIndex);
+    }
+    Submit(true, false);
+    Vk().vkDeviceWaitIdle(mDevice);
+    CollectCompleted();
+    DestroySwapChain(swapChain, false);
+  }
+
+  bool DeviceVulkan::AttachSurface(
+    const std::size_t headIndex
+  )
+  {
+    using Attach = vulkan::SurfaceLifecycle::Attach;
+    SwapChain& swapChain = mSwapChains[headIndex];
+    Attach outcome = Attach::Attached;
+    bool newSize = false;
+    std::string failure;
+    VkResult result = VK_SUCCESS;
+    swapChain.surface = vulkan::CreateWindowSurface(mInstance, swapChain.window, result);
+    if (swapChain.surface == VK_NULL_HANDLE) {
+      // VK_ERROR_SURFACE_LOST_KHR: the window has none to make one from yet (VulkanSurface.h).
+      outcome = (result == VK_ERROR_SURFACE_LOST_KHR) ? Attach::NoSurface : Attach::Refused;
+      failure = vulkan::ResultName(result);
+    } else {
+      VkSurfaceCapabilitiesKHR capabilities{};
+      const VkResult queried =
+        Vk().vkGetPhysicalDeviceSurfaceCapabilitiesKHR(mPhysical, swapChain.surface, &capabilities);
+      if (
+        queried == VK_SUCCESS && (capabilities.currentExtent.width == 0U || capabilities.currentExtent.height == 0U)
+      ) {
+        outcome = Attach::NoArea;
+      } else {
+        const VkExtent2D previous = swapChain.extent;
+        try {
+          CreateSwapChain(swapChain, swapChain.extent.width, swapChain.extent.height);
+          newSize = vulkan::SurfaceLifecycle::NewSize(
+            swapChain.scaled, previous.width, previous.height, swapChain.extent.width, swapChain.extent.height
+          );
+          if (!swapChain.scaled) {
+            // The head draws into the new images, at the size the platform gave its surface, which the engine
+            // lays out by (CD3DDevice::GetHeadWidth) once TestCooperativeLevel answers 1.
+            RebindSwapChainImages(headIndex);
+            Head& head = mDeviceContext.GetHead(static_cast<std::uint32_t>(headIndex));
+            head.mWidth = swapChain.extent.width;
+            head.mHeight = swapChain.extent.height;
+          }
+        } catch (const Error& error) {
+          // One that went again in the meantime is waited for, as one not there yet.
+          outcome = vulkan::WindowSurfaceIsCurrent(swapChain.window) ? Attach::Refused : Attach::NoSurface;
+          failure = error.what();
+        }
+      }
+      if (outcome != Attach::Attached) {
+        DestroySwapChain(swapChain, false);
+      }
+    }
+    const auto now = static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count()
+    );
+    switch (mSurfaceLifecycle.Attempted(headIndex, outcome, newSize, now)) {
+    case vulkan::SurfaceLifecycle::Verdict::Warn:
+      gpg::Warnf("Vulkan: head %u's surface failed (%s)", static_cast<unsigned>(headIndex), failure.c_str());
+      break;
+    case vulkan::SurfaceLifecycle::Verdict::End:
+      gpg::Die(
+        "Vulkan: head %u's surface failed for 5 s (%s); the game cannot draw on",
+        static_cast<unsigned>(headIndex),
+        failure.c_str()
+      );
+      break;
+    case vulkan::SurfaceLifecycle::Verdict::Continue:
+      break;
+    }
+    return outcome == Attach::Attached;
+  }
+
   int DeviceVulkan::TestCooperativeLevel()
   {
-    return 0;
+    // Engine addition: a window whose surface can go (an Android activity's goes when the activity goes to the
+    // back, and can change its size in place; a desktop window keeps its own, see VulkanSurface.h). A head
+    // lets go of a surface that went at a frame's edge, as here, and takes the next one as soon as there is
+    // one. Until then the engine sees a lost device, as Direct3D 9's when the display is taken from it (2), and
+    // Paint draws nothing. Vulkan loses only the swap chain, so nothing of the engine's is made anew: a head
+    // that draws into the swap chain's images and has them at a new size goes through Paint's InitContext (1),
+    // with the head at that size. A scaled head (ren_VulkanScaledPresent) keeps its own image and size.
+    if (mDevice == VK_NULL_HANDLE) {
+      return 0;
+    }
+    const std::lock_guard<std::recursive_mutex> lock(mMutex);
+    bool everyHeadHasSurface = true;
+    for (std::size_t headIndex = 0U; headIndex < mSwapChains.size(); ++headIndex) {
+      SwapChain& swapChain = mSwapChains[headIndex];
+      if (
+        swapChain.surface != VK_NULL_HANDLE &&
+        vulkan::SurfaceLifecycle::Releases(swapChain.surfaceLost, vulkan::WindowSurfaceIsCurrent(swapChain.window))
+      ) {
+        ReleaseSurface(headIndex);
+      }
+      if (swapChain.surface == VK_NULL_HANDLE && !AttachSurface(headIndex)) {
+        everyHeadHasSurface = false;
+      }
+    }
+    return mSurfaceLifecycle.Answer(everyHeadHasSurface);
   }
 
   void DeviceVulkan::BeginScene() {}
@@ -2918,10 +3334,12 @@ namespace gpg::gal
       present.pImageIndices = &swapChain.acquired;
       const VkResult result = Vk().vkQueuePresentKHR(mQueue, &present);
       if (result == VK_ERROR_DEVICE_LOST) {
-        CheckVk("DeviceVulkan.cpp", __LINE__, result);
+        CheckFrame(__LINE__, result, "presenting");
       } else if (swapChain.scaled && (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR)) {
-        swapChain.stale = true;
+        swapChain.stale =
+          swapChain.stale || result == VK_ERROR_OUT_OF_DATE_KHR || SuboptimalSwapChainIsStale(swapChain);
       } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        swapChain.surfaceLost = swapChain.surfaceLost || result == VK_ERROR_SURFACE_LOST_KHR;
         static int logged = 0;
         if (logged++ < 8) {
           gpg::Warnf("Vulkan: present of head %u: %s", static_cast<unsigned>(index), vulkan::ResultName(result));
@@ -2935,7 +3353,7 @@ namespace gpg::gal
     Frame& frame = mFrames[mFrameIndex];
     WaitForSerial(frame.serial);
     CollectCompleted();
-    CheckVk("DeviceVulkan.cpp", __LINE__, Vk().vkResetCommandPool(mDevice, frame.pool, 0U));
+    CheckFrame(__LINE__, Vk().vkResetCommandPool(mDevice, frame.pool, 0U), "resetting a command pool");
     frame.used = 0U;
     for (VkDescriptorPool pool : frame.descriptorPools) {
       Vk().vkResetDescriptorPool(mDevice, pool, 0U);
@@ -2946,8 +3364,9 @@ namespace gpg::gal
       Vk().vkResetDescriptorPool(mDevice, pool, 0U);
     }
     frame.gpuPool = 0U;
-    AcquireNextImages();
+    // The next frame's command buffer first: whatever the acquire meets, the frame records into one that is begun.
     BeginCommandBuffer();
+    AcquireNextImages();
     if (mSkippedDraws != 0U) {
       static int logged = 0;
       if (logged++ < 10) {
@@ -3612,28 +4031,12 @@ namespace gpg::gal
     if (found != mLinkedModules.end()) {
       return found->second;
     }
-    const effects::SpirvInterface& vertexInterface = InterfaceOf(*vertex);
-    const effects::SpirvInterface& pixelInterface = InterfaceOf(entry);
-    std::map<std::uint32_t, std::uint32_t> locations;
-    std::uint32_t spare = 31U;
-    for (const effects::SpirvInterfaceVariable& input : pixelInterface.inputs) {
-      if (input.builtIn) {
-        continue;
-      }
-      std::uint32_t location = 0xFFFFFFFFU;
-      for (const effects::SpirvInterfaceVariable& output : vertexInterface.outputs) {
-        if (
-          !output.builtIn && output.semantic == input.semantic && input.semanticIndex >= output.semanticIndex &&
-          input.semanticIndex < output.semanticIndex + output.locations
-        ) {
-          location = output.location + (input.semanticIndex - output.semanticIndex);
-        }
-      }
-      if (location == 0xFFFFFFFFU) {
-        location = spare--; // not written by the vertex shader: undefined, as on D3D
-      }
-      locations[input.id] = location;
-    }
+    // An input the vertex shader doesn't write is invalid in Vulkan, where Direct3D reads an undefined value; it
+    // counts down from the device's last location, so that its location at least is one the device has: Vulkan
+    // promises 16 (64 components), and a phone's GPU may have no more.
+    const std::map<std::uint32_t, std::uint32_t> locations = effects::LinkPixelInputLocations(
+      InterfaceOf(*vertex), InterfaceOf(entry), vulkan::LastFragmentInputLocation(mProperties.limits)
+    );
     const VkShaderModule module = create(effects::PatchSpirvInputLocations(entry.code, locations));
     mLinkedModules.emplace(key, module);
     return module;
@@ -3877,7 +4280,7 @@ namespace gpg::gal
     raster.depthBiasEnable =
       (rasterizer.depthBias != 0 || rasterizer.slopeScaledDepthBias != 0.0f) ? VK_TRUE : VK_FALSE;
     raster.depthBiasConstantFactor = static_cast<float>(rasterizer.depthBias);
-    raster.depthBiasClamp = rasterizer.depthBiasClamp;
+    raster.depthBiasClamp = vulkan::PipelineDepthBiasClamp(mDepthBiasClamp, rasterizer.depthBiasClamp);
     raster.depthBiasSlopeFactor = rasterizer.slopeScaledDepthBias;
     raster.lineWidth = 1.0f;
     VkPipelineMultisampleStateCreateInfo multisample{};
@@ -4075,6 +4478,11 @@ namespace gpg::gal
     }
     if (!mPass.valid) {
       ++mSkippedDraws;
+      return false;
+    }
+    // A back buffer whose head has no image shows nothing: its draws are left out, as a lost Direct3D 9 device's
+    // draws do nothing, and make no pipeline without a colour attachment for the frame alone.
+    if (TargetIsImagelessBackBuffer()) {
       return false;
     }
     VkPrimitiveTopology topology = kTopologyByToken[topologyToken];

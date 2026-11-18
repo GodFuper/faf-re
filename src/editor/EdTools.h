@@ -399,7 +399,7 @@ namespace faf::editor
     {
       mTool = 3;
       mWaterMaskPaint = true;
-      mWaterMaskKind = static_cast<int>(mask);
+      mWaterMaskKind = std::to_underlying(mask);
       mWaterMaskValue = value;
       mWaterMaskBrush.radius = radius;
       mWaterMaskBrush.strength = 1.0f;
@@ -1764,15 +1764,18 @@ namespace faf::editor
     struct ExportPackage
     {
       char folder[512] = "";
+      char name[128] = "";    // the files' first part (empty: the map's name)
       bool normalised = true; // else absolute (a word is 1/128 unit)
       bool fixedRange = false;
       float low = 0.0f;
       float high = 100.0f;
-      bool float32 = false; // .r32 heights
+      int format = 0;       // 0 PNG, 1 TIFF, 2 raw (.r16 / .r32)
+      bool float32 = false; // 32-bit float heights (a TIFF, or .r32 when raw)
       bool mask8 = false;   // 8-bit masks
       bool height = true, water = true, slope = true, flow = false, wear = false, layers = true, types = false,
            markers = true, playable = true, readme = true;
-      float markerRadius = 3.0f;
+      float waterSoft = 0.5f;    // the water mask's soft edge (units)
+      float markerRadius = 3.0f; // the start and resource discs' radius (samples)
       // The link watches the folder: new heights or masks by their names (height*, layer<n>*, mask<n>*).
       bool watch = false;
       float interval = 2.0f;
@@ -1804,6 +1807,19 @@ namespace faf::editor
     {
       return mPackage;
     }
+    /** One file the export package writes (FAF Studio's interopexport.lua Plan): its name and what it holds. */
+    struct PackageFile
+    {
+      std::string id;
+      std::string file;
+      std::string what;
+    };
+    /** The files of an export package with these settings, named `<stem>_<what>.<ext>`. */
+    [[nodiscard]] static std::vector<PackageFile> PackagePlan(const ExportPackage& p, const std::string& stem);
+    /** The heights' extension: raw .r16 / .r32, a TIFF for TIFF or 32-bit floats, else PNG. */
+    [[nodiscard]] static std::string PackageHeightExtension(const ExportPackage& p);
+    /** The files' first part: the package's name, else the open map's folder name. */
+    [[nodiscard]] std::string PackageStem() const;
     [[nodiscard]] bool TakePackageAsk() noexcept
     {
       return std::exchange(mPackageAsk, false);
@@ -2610,7 +2626,7 @@ namespace faf::editor
       LayerConvertOptions& options
     )
     {
-      const std::string key = mBrowsedShader + "|" + std::to_string(static_cast<int>(mConvertOptions.lost)) + "|" +
+      const std::string key = mBrowsedShader + "|" + std::to_string(std::to_underlying(mConvertOptions.lost)) + "|" +
         std::to_string(mConvertOptions.mergeInto) + "|" + (mConvertOptions.arrange ? "1" : "0");
       if (!mShaderBrowserOpen || mBrowsedShader.empty() || key == mConvertPlanKey) {
         return false;
@@ -3190,7 +3206,7 @@ namespace faf::editor
       const float offsetZ
     ) noexcept
     {
-      const int index = found.symmetry == Symmetry::None ? -1 : static_cast<int>(found.symmetry);
+      const int index = found.symmetry == Symmetry::None ? -1 : std::to_underlying(found.symmetry);
       const int turns = found.turns;
       mDetectedSymmetry = index;
       mDetectedMatch = found.matched;
@@ -3382,7 +3398,7 @@ namespace faf::editor
       mChecked = checked;
       mDiffering = differing;
       mLargest = largestWords;
-      mCheckedSymmetry = static_cast<int>(checkedWith.symmetry);
+      mCheckedSymmetry = std::to_underlying(checkedWith.symmetry);
       mCheckedTurns = checkedWith.turns;
     }
 
@@ -3461,7 +3477,7 @@ namespace faf::editor
     float mNoiseRoughness = 0.5f;
     float mPlanePointX[3]{};
     std::vector<TerrainPathPoint> mPathPoints;
-    int mPathMode = static_cast<int>(PathMode::Ramp);
+    int mPathMode = std::to_underlying(PathMode::Ramp);
     float mPathDepth = 4.0f;
     bool mPathClosed = false;
     bool mPathApply = false;

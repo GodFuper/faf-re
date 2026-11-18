@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -132,11 +133,10 @@ namespace faf::editor
     }
   } // namespace
 
-  bool EdMissionPanel::DefineBaseFromArea(
+  std::expected<void, std::string> EdMissionPanel::DefineBaseFromArea(
     const std::string& name,
     const std::string& army,
-    const std::string& area,
-    std::string& why
+    const std::string& area
   )
   {
     Mission& m = mDocument.EditMission();
@@ -146,14 +146,12 @@ namespace faf::editor
       return std::isalnum(static_cast<unsigned char>(c)) == 0 && c != '_';
     })
     ) {
-      why = "a base name takes letters, digits and _ and starts with a letter";
-      return false;
+      return std::unexpected("a base name takes letters, digits and _ and starts with a letter");
     }
     if (std::any_of(m.bases.begin(), m.bases.end(), [&](const MissionBase& b) {
       return b.name == name;
     })) {
-      why = "there is already a base " + name;
-      return false;
+      return std::unexpected("there is already a base " + name);
     }
     const SaveFile& save = mDocument.SaveData();
     std::vector<double> rect;
@@ -163,8 +161,7 @@ namespace faf::editor
       }
     }
     if (rect.size() < 4) {
-      why = "there is no area " + area;
-      return false;
+      return std::unexpected("there is no area " + area);
     }
     const double x0 = std::min(rect[0], rect[2]);
     const double x1 = std::max(rect[0], rect[2]);
@@ -177,8 +174,7 @@ namespace faf::editor
     ask.z = static_cast<float>((z0 + z1) * 0.5);
     for (const SaveEntry& entry : save.Armies()) {
       UnitGroup root;
-      std::string error;
-      if (entry.name != army || !ParseUnitGroup(entry.Get("Units"), root, error)) {
+      if (entry.name != army || !ParseUnitGroup(entry.Get("Units"), root)) {
         continue;
       }
       std::vector<const SaveUnit*> units;
@@ -201,7 +197,7 @@ namespace faf::editor
     mBase = static_cast<int>(m.bases.size()) - 1;
     Edited(std::move(before));
     mDefineAsk = std::move(ask);
-    return true;
+    return {};
   }
 
   MissionFacts MissionFactsOf(
@@ -225,8 +221,7 @@ namespace faf::editor
     }
     for (const SaveEntry& army : save.Armies()) {
       UnitGroup root;
-      std::string error;
-      if (ParseUnitGroup(army.Get("Units"), root, error)) {
+      if (ParseUnitGroup(army.Get("Units"), root)) {
         CollectGroups(root, facts.groups[army.name]);
       }
       facts.builders[army.name] = MissionBuilderNames(army.Get("PlatoonBuilders"));
@@ -858,9 +853,9 @@ namespace faf::editor
     Mission& m = mDocument.EditMission();
     // Where the play is: the last stage entered.
     int current = 0;
-    for (auto it = mTrace.rbegin(); it != mTrace.rend(); ++it) {
+    for (auto& entry : mTrace | std::views::reverse) {
       MissionTraceId id;
-      if (ParseMissionTrace(*it, id) && id.section.empty()) {
+      if (ParseMissionTrace(entry, id) && id.section.empty()) {
         current = id.stage;
         break;
       }
@@ -997,7 +992,7 @@ namespace faf::editor
     ImGui::BeginChild("##trace", ImVec2(0.0f, 0.0f), false);
     for (std::size_t k = 0; k < mTrace.size(); ++k) {
       MissionTraceId id;
-      if (mTrace[k].rfind("end.", 0) == 0) {
+      if (mTrace[k].starts_with("end.")) {
         // The operation's end (the test run records it instead of ending the game).
         const bool won = mTrace[k] == "end.won";
         ImGui::TextColored(
@@ -1117,14 +1112,14 @@ namespace faf::editor
     if (!facts.areas.empty() && !facts.armies.empty() && ImGui::TreeNode("Define from area")) {
       mDefineArea = std::clamp(mDefineArea, 0, static_cast<int>(facts.areas.size()) - 1);
       mDefineArmy = std::clamp(mDefineArmy, 0, static_cast<int>(facts.armies.size()) - 1);
-      std::vector<const char*> areas;
-      for (const std::string& a : facts.areas) {
-        areas.push_back(a.c_str());
-      }
-      std::vector<const char*> armies;
-      for (const std::string& a : facts.armies) {
-        armies.push_back(a.c_str());
-      }
+      auto areas = facts.areas | std::views::transform([&](const std::string& a) {
+        return a.c_str();
+      }) |
+        std::ranges::to<std::vector<const char*>>();
+      auto armies = facts.armies | std::views::transform([&](const std::string& a) {
+        return a.c_str();
+      }) |
+        std::ranges::to<std::vector<const char*>>();
       ImGui::SetNextItemWidth(Em(120.0f));
       ImGui::InputText("Name##definebase", mDefineName, sizeof(mDefineName));
       ImGui::SetNextItemWidth(Em(120.0f));
@@ -1132,14 +1127,15 @@ namespace faf::editor
       ImGui::SetNextItemWidth(Em(120.0f));
       (void)EdCombo("Army##definebase", &mDefineArmy, armies.data(), static_cast<int>(armies.size()));
       if (ImGui::Button("Define the base")) {
-        std::string why;
-        if (!DefineBaseFromArea(
-              mDefineName,
-              facts.armies[static_cast<std::size_t>(mDefineArmy)],
-              facts.areas[static_cast<std::size_t>(mDefineArea)],
-              why
-            )) {
-          gpg::Warnf("editor: define base: %s", why.c_str());
+        if (
+          const auto defined = DefineBaseFromArea(
+            mDefineName,
+            facts.armies[static_cast<std::size_t>(mDefineArmy)],
+            facts.areas[static_cast<std::size_t>(mDefineArea)]
+          );
+          !defined
+        ) {
+          gpg::Warnf("editor: define base: %s", defined.error().c_str());
         }
       }
       EdSetItemTooltip(
@@ -1537,8 +1533,7 @@ namespace faf::editor
       std::map<std::string, int> counts;
       for (const SaveEntry& army : mDocument.SaveData().Armies()) {
         UnitGroup root;
-        std::string error;
-        if (army.name == mFromArmy && ParseUnitGroup(army.Get("Units"), root, error)) {
+        if (army.name == mFromArmy && ParseUnitGroup(army.Get("Units"), root)) {
           (void)CountGroup(root, mFromGroup, counts);
         }
       }
@@ -1776,8 +1771,7 @@ namespace faf::editor
     int builders = 0;
     for (const SaveEntry& army : mDocument.SaveData().Armies()) {
       UnitGroup root;
-      std::string error;
-      if (ParseUnitGroup(army.Get("Units"), root, error)) {
+      if (ParseUnitGroup(army.Get("Units"), root)) {
         const auto walk = [&](auto&& self, const UnitGroup& g) -> void {
           groups += (templateKind ? g.platoon : g.orders) == name ? 1 : 0;
           for (const SaveUnit& u : g.units) {
@@ -1790,9 +1784,8 @@ namespace faf::editor
         walk(walk, root);
       }
       if (templateKind) {
-        std::vector<MissionBuilder> list;
-        if (ParseBuilders(army.Get("PlatoonBuilders"), list, error)) {
-          for (const MissionBuilder& b : list) {
+        if (const auto list = ParseBuilders(army.Get("PlatoonBuilders"))) {
+          for (const MissionBuilder& b : *list) {
             builders +=
               b.Get("PlatoonTemplate") == "'" + name + "'" || b.Get("PlatoonTemplate") == "\"" + name + "\"" ? 1 : 0;
           }
@@ -1852,8 +1845,7 @@ namespace faf::editor
       int renamed = 0;
       for (SaveEntry& army : mDocument.SaveData().Armies()) {
         UnitGroup root;
-        std::string error;
-        if (ParseUnitGroup(army.Get("Units"), root, error)) {
+        if (ParseUnitGroup(army.Get("Units"), root)) {
           int here = 0;
           const auto walk = [&](auto&& self, UnitGroup& g) -> void {
             std::string& own = templateKind ? g.platoon : g.orders;
@@ -1878,17 +1870,20 @@ namespace faf::editor
             renamed += here;
           }
         }
-        std::vector<MissionBuilder> list;
-        if (templateKind && ParseBuilders(army.Get("PlatoonBuilders"), list, error)) {
+        if (
+          auto list = templateKind ? ParseBuilders(army.Get("PlatoonBuilders"))
+                                   : std::expected<std::vector<MissionBuilder>, std::string>(std::unexpect);
+          list
+        ) {
           int here = 0;
-          for (MissionBuilder& b : list) {
+          for (MissionBuilder& b : *list) {
             if (b.Get("PlatoonTemplate") == "'" + name + "'" || b.Get("PlatoonTemplate") == "\"" + name + "\"") {
               b.Set("PlatoonTemplate", "'" + to + "'");
               ++here;
             }
           }
           if (here > 0) {
-            army.Set("PlatoonBuilders", FormatBuilders(list));
+            army.Set("PlatoonBuilders", FormatBuilders(*list));
             renamed += here;
           }
         }
@@ -1941,8 +1936,7 @@ namespace faf::editor
         EdDocument::SaveSnapshot before = mDocument.SaveDataNow();
         for (SaveEntry& army : mDocument.SaveData().Armies()) {
           UnitGroup root;
-          std::string error;
-          if (army.name != mAssignArmy || !ParseUnitGroup(army.Get("Units"), root, error)) {
+          if (army.name != mAssignArmy || !ParseUnitGroup(army.Get("Units"), root)) {
             continue;
           }
           bool done = false;
@@ -1997,12 +1991,12 @@ namespace faf::editor
       ImGui::EndCombo();
     }
     SaveEntry& army = armies[static_cast<std::size_t>(armyIndex)];
-    std::vector<MissionBuilder> builders;
-    std::string error;
-    if (!ParseBuilders(army.Get("PlatoonBuilders"), builders, error)) {
-      ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "Its builders can't be read: %s", error.c_str());
+    auto parsed = ParseBuilders(army.Get("PlatoonBuilders"));
+    if (!parsed) {
+      ImGui::TextColored(ImVec4(0.95f, 0.5f, 0.4f, 1.0f), "Its builders can't be read: %s", parsed.error().c_str());
       return;
     }
+    std::vector<MissionBuilder>& builders = *parsed;
     const auto write = [&](const std::string& what) {
       EdDocument::SaveSnapshot before = mDocument.SaveDataNow();
       army.Set("PlatoonBuilders", FormatBuilders(builders));

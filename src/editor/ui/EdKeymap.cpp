@@ -1,5 +1,6 @@
 #include "editor/ui/EdKeymap.h"
 
+#include <utility>
 #include <algorithm>
 #include <cctype>
 
@@ -39,7 +40,7 @@ namespace faf::editor
     )
     {
       for (const std::string_view modifier : {"Ctrl+", "Shift+", "Alt+"}) {
-        if (chord.substr(0, modifier.size()) == modifier) {
+        if (chord.starts_with(modifier)) {
           chord.remove_prefix(modifier.size());
         }
       }
@@ -81,9 +82,9 @@ namespace faf::editor
       const std::string id(Trim(line.substr(0, equals)));
       const std::string_view keys = Trim(line.substr(equals + 1));
       // A camera gesture (`mouse.orbit=Shift+Middle`).
-      if (id.rfind("mouse.", 0) == 0) {
+      if (id.starts_with("mouse.")) {
         bool known = false;
-        for (int g = 0; g < static_cast<int>(CameraGesture::Count); ++g) {
+        for (int g = 0; g < std::to_underlying(CameraGesture::Count); ++g) {
           if (id == CameraGestureId(static_cast<CameraGesture>(g))) {
             known = true;
             MouseChord chord;
@@ -140,7 +141,7 @@ namespace faf::editor
         out += command.id + "=" + command.keys + "\n";
       }
     }
-    for (int g = 0; g < static_cast<int>(CameraGesture::Count); ++g) {
+    for (int g = 0; g < std::to_underlying(CameraGesture::Count); ++g) {
       const MouseChord& now = ActiveCameraGestures()[static_cast<std::size_t>(g)];
       if (!(now == DefaultCameraGestures()[static_cast<std::size_t>(g)])) {
         out += std::string(CameraGestureId(static_cast<CameraGesture>(g))) + "=" + MouseChordText(now) + "\n";
@@ -372,9 +373,9 @@ namespace faf::editor
       return true;
     }
     const std::string_view key = KeyOf(canonical);
-    const bool ctrl = canonical.rfind("Ctrl+", 0) == 0;
-    const bool alt = canonical.find("Alt+") != std::string::npos;
-    const bool shift = canonical.find("Shift+") != std::string::npos;
+    const bool ctrl = canonical.starts_with("Ctrl+");
+    const bool alt = canonical.contains("Alt+");
+    const bool shift = canonical.contains("Shift+");
     const bool functionKey = key.size() >= 2 && key[0] == 'F' && std::isdigit(static_cast<unsigned char>(key[1])) != 0;
     if (!ctrl && !alt && !shift) {
       for (const std::string_view nav : {"Up", "Down", "Left", "Right", "Space", "Enter", "Tab", "Escape"}) {

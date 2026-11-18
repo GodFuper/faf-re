@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -155,8 +156,7 @@ namespace faf::editor
     std::vector<ModObject> out;
     for (const SaveEntry& army : mDocument.SaveData().Armies()) {
       UnitGroup group;
-      std::string error;
-      if (!ParseUnitGroup(army.Get("Units"), group, error)) {
+      if (!ParseUnitGroup(army.Get("Units"), group)) {
         continue;
       }
       std::vector<const SaveUnit*> units;
@@ -202,8 +202,7 @@ namespace faf::editor
     int highest = 0;
     for (const SaveEntry& entry : armies) {
       UnitGroup group;
-      std::string error;
-      if (ParseUnitGroup(entry.Get("Units"), group, error)) {
+      if (ParseUnitGroup(entry.Get("Units"), group)) {
         highest = std::max(highest, HighestUnitNumber(group));
       }
     }
@@ -364,8 +363,7 @@ namespace faf::editor
     std::vector<std::vector<std::string>> paths;
     for (const SaveEntry& entry : mDocument.SaveData().Armies()) {
       UnitGroup root;
-      std::string error;
-      if (entry.name != army || !ParseUnitGroup(entry.Get("Units"), root, error)) {
+      if (entry.name != army || !ParseUnitGroup(entry.Get("Units"), root)) {
         continue;
       }
       paths.push_back({});
@@ -373,10 +371,10 @@ namespace faf::editor
       while (!open.empty()) {
         auto [group, path] = open.back();
         open.pop_back();
-        for (auto child = group->groups.rbegin(); child != group->groups.rend(); ++child) {
+        for (auto& child : group->groups | std::views::reverse) {
           std::vector<std::string> next = path;
-          next.push_back(child->name);
-          open.emplace_back(&*child, next);
+          next.push_back(child.name);
+          open.emplace_back(&child, next);
         }
         if (!path.empty()) {
           paths.push_back(path);

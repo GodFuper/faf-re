@@ -154,10 +154,10 @@ namespace
    */
   struct ResolutionLess
   {
-    [[nodiscard]] bool operator()(
+    [[nodiscard]] static bool operator()(
       const moho::Resolution& lhs,
       const moho::Resolution& rhs
-    ) const noexcept
+    ) noexcept
     {
       if (lhs.width != rhs.width) {
         return lhs.width < rhs.width;
@@ -280,7 +280,7 @@ namespace
         static_cast<std::int32_t>(adapterMode.height),
         static_cast<std::int32_t>(adapterMode.refreshRate)
       );
-      if (published.find(mode) != published.end()) {
+      if (published.contains(mode)) {
         continue;
       }
       (void)published.insert(mode);

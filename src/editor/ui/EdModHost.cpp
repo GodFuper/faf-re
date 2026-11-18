@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <ranges>
 
 namespace faf::editor
 {
@@ -340,10 +341,10 @@ namespace faf::editor
       }
       lua_pushvalue(L, 4);
       const int ref = luaL_ref(L, LUA_REGISTRYINDEX);
-      std::vector<std::string> keys;
-      for (const MissionParam& p : type.params) {
-        keys.push_back(p.key);
-      }
+      auto keys = type.params | std::views::transform([&](const MissionParam& p) {
+        return p.key;
+      }) |
+        std::ranges::to<std::vector<std::string>>();
       const std::string title = type.title;
       Mod* const owner = mod;
       type.emit = [owner, ref, keys, title](const MissionValues& values, const MissionEmit&) {
@@ -379,9 +380,8 @@ namespace faf::editor
         }
         return lines;
       };
-      std::string error;
-      if (!RegisterMissionNodeType(std::move(type), error)) {
-        lua_pushstring(L, ("Editor.MissionNode: " + error).c_str());
+      if (const auto registered = RegisterMissionNodeType(std::move(type)); !registered) {
+        lua_pushstring(L, ("Editor.MissionNode: " + registered.error()).c_str());
         lua_error(L);
         return 0;
       }
@@ -460,10 +460,9 @@ namespace faf::editor
         heights[i] = static_cast<float>(lua_tonumber(L, -1));
         lua_pop(L, 1);
       }
-      std::string why;
-      if (!gHost->writeHeights(x0, z0, w, h, heights, why)) {
+      if (const auto written = gHost->writeHeights(x0, z0, w, h, heights); !written) {
         lua_pushnil(L);
-        lua_pushstring(L, why.c_str());
+        lua_pushstring(L, written.error().c_str());
         return 2;
       }
       lua_pushboolean(L, 1);
@@ -524,17 +523,18 @@ namespace faf::editor
         weights[i] = static_cast<float>(lua_tonumber(L, -1));
         lua_pop(L, 1);
       }
-      std::string why;
-      if (!gHost->writeLayer(
-            static_cast<int>(lua_tonumber(L, 1)),
-            static_cast<int>(lua_tonumber(L, 2)),
-            static_cast<int>(lua_tonumber(L, 3)),
-            w,
-            h,
-            weights,
-            why
-          )) {
-        return Result(L, why.empty() ? std::string("the paint couldn't be written") : why);
+      if (
+        const auto written = gHost->writeLayer(
+          static_cast<int>(lua_tonumber(L, 1)),
+          static_cast<int>(lua_tonumber(L, 2)),
+          static_cast<int>(lua_tonumber(L, 3)),
+          w,
+          h,
+          weights
+        );
+        !written
+      ) {
+        return Result(L, written.error().empty() ? std::string("the paint couldn't be written") : written.error());
       }
       return Result(L, {});
     }
@@ -707,8 +707,8 @@ namespace faf::editor
       } else if (!remove) {
         value = ArgString(L, 2);
       }
-      std::string why;
-      return Result(L, gHost->SetMapData(mod->info.uid, ArgString(L, 1), value, remove, why) ? std::string() : why);
+      const auto set = gHost->SetMapData(mod->info.uid, ArgString(L, 1), value, remove);
+      return Result(L, set ? std::string() : set.error());
     }
 
     /** Editor.Menu(commandId [, label]) */
@@ -954,7 +954,7 @@ namespace faf::editor
   {
     std::vector<std::string> out;
     for (const std::unique_ptr<Mod>& mod : mMods) {
-      if (mod->info.simHooks && mEnabled.count(mod->info.uid) != 0 && !mod->info.uid.empty()) {
+      if (mod->info.simHooks && mEnabled.contains(mod->info.uid) && !mod->info.uid.empty()) {
         out.push_back(mod->info.uid);
       }
     }
@@ -1038,22 +1038,19 @@ namespace faf::editor
     return it != store.end() ? it->second : std::string();
   }
 
-  bool EdModHost::SetMapData(
+  std::expected<void, std::string> EdModHost::SetMapData(
     const std::string& uid,
     const std::string& key,
     const std::string& value,
-    const bool remove,
-    std::string& why
+    const bool remove
   )
   {
     const std::filesystem::path file = MapDataFile(mDocument);
     if (file.empty()) {
-      why = "the open map isn't on disk yet (save it first)";
-      return false;
+      return std::unexpected("the open map isn't on disk yet (save it first)");
     }
     if (key.empty() || key.size() > 200 || value.size() > 65536) {
-      why = "a key of 1 to 200 characters and a value up to 64 KB";
-      return false;
+      return std::unexpected("a key of 1 to 200 characters and a value up to 64 KB");
     }
     auto store = ReadStore(file);
     if (remove) {
@@ -1067,10 +1064,9 @@ namespace faf::editor
       out << StoreEscape(where.first) << '\t' << StoreEscape(where.second) << '\t' << StoreEscape(v) << '\n';
     }
     if (!out) {
-      why = "couldn't write " + file.filename().string();
-      return false;
+      return std::unexpected("couldn't write " + file.filename().string());
     }
-    return true;
+    return {};
   }
 
   void EdModHost::EndTrial()
@@ -1133,7 +1129,7 @@ namespace faf::editor
       bool added = false;
       for (const EditorModInfo& info : FindEditorMods(mods)) {
         if (known.insert(info.uid).second) {
-          if (mNewModsOn && mTrialOff.count(info.uid) == 0) {
+          if (mNewModsOn && !mTrialOff.contains(info.uid)) {
             mEnabled.insert(info.uid);
           }
           added = true;
@@ -1163,7 +1159,7 @@ namespace faf::editor
       mod->info = std::move(info);
       Mod& added = *mod;
       mMods.push_back(std::move(mod));
-      if (mEnabled.count(added.info.uid) != 0) {
+      if (mEnabled.contains(added.info.uid)) {
         Start(added);
       }
     }
@@ -1672,7 +1668,7 @@ namespace faf::editor
     }
     for (const std::unique_ptr<Mod>& mod : mMods) {
       ImGui::PushID(mod->info.uid.c_str());
-      bool on = mEnabled.count(mod->info.uid) != 0;
+      bool on = mEnabled.contains(mod->info.uid);
       if (ImGui::Checkbox(mod->info.name.c_str(), &on)) {
         (void)SetEnabled(mod->info.uid, on);
       }
