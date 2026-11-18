@@ -193,6 +193,12 @@ TEST_F(StrategicIconHpOutlineOptionsLuaTest, AllSixOutlineOptionsPresentAndValid
       end
     end
 
+    -- Subcategory header
+    local header = byKey['strategic_icons_header']
+    assert(header ~= nil, "strategic_icons_header item not found")
+    assert(header.type == 'header', "header type must be header")
+    assert(type(header.title) == 'string' and string.len(header.title) > 0, "header title missing")
+
     -- 1. strategic_icon_outline_mode
     local mode = byKey['strategic_icon_outline_mode']
     assert(mode ~= nil, "strategic_icon_outline_mode item not found")

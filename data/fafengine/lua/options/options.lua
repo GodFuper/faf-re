@@ -880,6 +880,13 @@ do
 
         if Supported() then
             table.insert(ui.items, {
+                title = "<LOC options_strategic_icons_header>Strategic Icon Outlines",
+                type = 'header',
+                default = '',
+                key = 'strategic_icons_header',
+            })
+
+            table.insert(ui.items, {
                 title = "<LOC options_strategic_icon_outline_mode>Strategic Icon HP Outline",
                 tip = "<LOC options_strategic_icon_outline_mode_tip>Render a health-indicating outline directly around unit strategic icons (Off, Color Shift, Sweep).",
                 key = 'strategic_icon_outline_mode',
