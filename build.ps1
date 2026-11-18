@@ -52,7 +52,7 @@ param(
   # Where test builds (-Name, Profile) go, never the FAF data folder: the system drive has no
   # room for hundreds of exe/pdb pairs. Laid out like FafDir so init_faf.lua finds
   # ../fa_path.lua, ../gamedata and ../user from it. Default: FAF_TESTBIN_DIR, else tmp\testbin.
-  [string]$TestDir = $(if ($env:FAF_TESTBIN_DIR) { $env:FAF_TESTBIN_DIR } else { Join-Path $PSScriptRoot 'tmp\testbin' }),
+  [string]$TestDir = $(if ($env:FAF_TESTBIN_DIR) { $env:FAF_TESTBIN_DIR } elseif ($PSScriptRoot) { Join-Path $PSScriptRoot 'tmp\testbin' } else { 'tmp\testbin' }),
 
   # Test builds (exe/pdb) in TestDir older than this many days are deleted at each test copy.
   [int]$KeepDays = 3,
